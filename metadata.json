@@ -1,0 +1,6 @@
+{
+  "name": "Shree AmarMohan Learning Centre",
+  "description": "A comprehensive portal for tutors and parents to coordinate schedules, test papers, attendance, tuition dues, and direct messaging.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
