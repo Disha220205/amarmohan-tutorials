@@ -514,7 +514,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
             } else {
                 android.telephony.SmsManager.getDefault()
             }
-            val message = if (cleanPhone == "7676251295") {
+            val message = if (cleanPhone == "9986736360") {
                 "Your Shree Amarmohan Tutor verification OTP is: $otp"
             } else {
                 "Your Shree Amarmohan Parent verification OTP is: $otp. (Sent from Tutor: 9986736360)"
@@ -746,6 +746,13 @@ class MainViewModel(private val repository: StudentRepository, private val conte
             } else {
                 repository.addStudent(finalUpdated)
             }
+            refreshData()
+        }
+    }
+
+    fun updateStudent(student: Student) {
+        viewModelScope.launch {
+            repository.updateStudent(student)
             refreshData()
         }
     }
@@ -1687,6 +1694,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
 
     // Add general subjects test record
     fun addTestScore(studentSlNo: String, subject: String, score: Double, maxScore: Double, testType: String) {
+        if (maxScore <= 0 || score < 0 || score > maxScore) return
         viewModelScope.launch {
             val student = repository.getStudentBySlNo(studentSlNo) ?: return@launch
             val subjects = student.getSubjects().toMutableList()
