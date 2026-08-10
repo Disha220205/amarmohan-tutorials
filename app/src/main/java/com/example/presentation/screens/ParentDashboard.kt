@@ -40,10 +40,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.example.domain.model.*
 import com.example.presentation.viewmodel.MainViewModel
@@ -119,6 +123,17 @@ fun ParentDashboard(
 
     // Confirmation dialog state
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showLogoutConfirmDialog by remember { mutableStateOf(false) }
+    var showAppGuideDialog by remember { mutableStateOf(false) }
+
+    // Change Password Dialog States
+    var showChangePasswordDialog by remember { mutableStateOf(false) }
+    var oldPasswordInput by remember { mutableStateOf("") }
+    var newPasswordInput by remember { mutableStateOf("") }
+    var confirmPasswordInput by remember { mutableStateOf("") }
+    var oldPasswordVisible by remember { mutableStateOf(false) }
+    var newPasswordVisible by remember { mutableStateOf(false) }
+    var confirmPasswordVisible by remember { mutableStateOf(false) }
 
     // Camera & File Pickers
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -190,15 +205,24 @@ fun ParentDashboard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = {
-                            viewModel.logOut()
-                            Toast.makeText(context, "Logged out successfully", Toast.LENGTH_SHORT).show()
-                        }) {
-                            Icon(
-                                imageVector = Icons.Default.ArrowBack,
-                                contentDescription = "Log Out",
-                                tint = Color(0xFF423870)
-                            )
+                        IconButton(
+                            onClick = { showLogoutConfirmDialog = true },
+                            modifier = Modifier.testTag("parent_app_logo_button")
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF5138B8)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.School,
+                                    contentDescription = "App Logo / Log Out",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
@@ -209,44 +233,77 @@ fun ParentDashboard(
                         )
                     }
 
-                    Box {
-                        IconButton(onClick = { showSettingsMenu = !showSettingsMenu }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = { showAppGuideDialog = true },
+                            modifier = Modifier.testTag("parent_app_guide_button")
+                        ) {
                             Icon(
-                                imageVector = Icons.Default.Settings,
-                                contentDescription = "Settings",
+                                imageVector = Icons.Default.HelpOutline,
+                                contentDescription = "App Instructions & Guide",
                                 tint = Color(0xFF423870)
                             )
                         }
-                        DropdownMenu(
-                            expanded = showSettingsMenu,
-                            onDismissRequest = { showSettingsMenu = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Refresh Records") },
-                                onClick = {
-                                    showSettingsMenu = false
-                                    viewModel.refreshData()
-                                    Toast.makeText(context, "Refreshed data!", Toast.LENGTH_SHORT).show()
-                                },
-                                leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Edit Student Profile") },
-                                onClick = {
-                                    showSettingsMenu = false
-                                    activeSubViewTab = 2
-                                },
-                                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Log Out") },
-                                onClick = {
-                                    showSettingsMenu = false
-                                    viewModel.logOut()
-                                    Toast.makeText(context, "Logged out successfully", Toast.LENGTH_SHORT).show()
-                                },
-                                leadingIcon = { Icon(Icons.Default.ExitToApp, contentDescription = null, tint = Color.Red) }
-                            )
+
+                        Box {
+                            IconButton(onClick = { showSettingsMenu = !showSettingsMenu }) {
+                                Icon(
+                                    imageVector = Icons.Default.Settings,
+                                    contentDescription = "Settings",
+                                    tint = Color(0xFF423870)
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showSettingsMenu,
+                                onDismissRequest = { showSettingsMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("App Guide & Instructions") },
+                                    onClick = {
+                                        showSettingsMenu = false
+                                        showAppGuideDialog = true
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.HelpOutline, contentDescription = null, tint = Color(0xFF5138B8)) },
+                                    modifier = Modifier.testTag("app_guide_menu_item")
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Refresh Records") },
+                                    onClick = {
+                                        showSettingsMenu = false
+                                        viewModel.refreshData()
+                                        Toast.makeText(context, "Refreshed data!", Toast.LENGTH_SHORT).show()
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Change Password") },
+                                    onClick = {
+                                        showSettingsMenu = false
+                                        oldPasswordInput = ""
+                                        newPasswordInput = ""
+                                        confirmPasswordInput = ""
+                                        showChangePasswordDialog = true
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFF7A68E6)) },
+                                    modifier = Modifier.testTag("change_password_menu_item")
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Edit Student Profile") },
+                                    onClick = {
+                                        showSettingsMenu = false
+                                        activeSubViewTab = 2
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Log Out") },
+                                    onClick = {
+                                        showSettingsMenu = false
+                                        showLogoutConfirmDialog = true
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.ExitToApp, contentDescription = null, tint = Color.Red) }
+                                )
+                            }
                         }
                     }
                 }
@@ -293,6 +350,43 @@ fun ParentDashboard(
                         )
                     }
                 }
+            }
+
+            // Quick Guide Banner
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .background(Color(0xFFEEF2FF), RoundedCornerShape(10.dp))
+                    .clickable { showAppGuideDialog = true }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.HelpOutline,
+                        contentDescription = null,
+                        tint = Color(0xFF5138B8),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Need help? Tap for App Demo & Feature Guide",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF423870)
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Default.ChevronRight,
+                    contentDescription = null,
+                    tint = Color(0xFF7A68E6),
+                    modifier = Modifier.size(18.dp)
+                )
             }
 
             // STUDENT INFO BADGE CARD (Matches Screenshot 1, 2, 3)
@@ -666,8 +760,8 @@ fun ParentDashboard(
                                     }
                                 }
 
-                                // BOTTOM ACTION BUTTONS (Call Parent / Message)
-                                val parentPhoneToContact = if (student.parentPhone.isNotEmpty()) student.parentPhone else "9448524442"
+                                // BOTTOM ACTION BUTTONS (Call Tutor / Message Tutor)
+                                val tutorPhoneToContact = "9986736360"
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -676,30 +770,30 @@ fun ParentDashboard(
                                 ) {
                                     Button(
                                         onClick = {
-                                            val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$parentPhoneToContact"))
+                                            val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$tutorPhoneToContact"))
                                             context.startActivity(intent)
                                         },
                                         modifier = Modifier
                                             .weight(1f)
-                                            .testTag("call_button_${student.slNo}"),
+                                            .testTag("call_tutor_button_${student.slNo}"),
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
                                         shape = RoundedCornerShape(12.dp)
                                     ) {
                                         Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(18.dp))
                                         Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Call Parent", fontWeight = FontWeight.Bold)
+                                        Text("Call Tutor", fontWeight = FontWeight.Bold)
                                     }
 
                                     Button(
                                         onClick = {
-                                            val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$parentPhoneToContact")).apply {
-                                                putExtra("sms_body", "Hello, regarding student ${student.name}.")
+                                            val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$tutorPhoneToContact")).apply {
+                                                putExtra("sms_body", "Hello Amarmohan Sir, regarding student ${student.name}.")
                                             }
                                             context.startActivity(intent)
                                         },
                                         modifier = Modifier
                                             .weight(1f)
-                                            .testTag("message_button_${student.slNo}"),
+                                            .testTag("message_tutor_button_${student.slNo}"),
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B82F6)),
                                         shape = RoundedCornerShape(12.dp)
                                     ) {
@@ -1457,6 +1551,23 @@ fun ParentDashboard(
                                 }
 
                                 OutlinedButton(
+                                    onClick = {
+                                        oldPasswordInput = ""
+                                        newPasswordInput = ""
+                                        confirmPasswordInput = ""
+                                        showChangePasswordDialog = true
+                                    },
+                                    modifier = Modifier.fillMaxWidth().testTag("change_password_profile_button"),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF423870)),
+                                    border = BorderStroke(1.dp, Color(0xFF7A68E6)),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFF7A68E6))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Change Parent Password", fontWeight = FontWeight.Bold)
+                                }
+
+                                OutlinedButton(
                                     onClick = { showDeleteConfirmDialog = true },
                                     modifier = Modifier.fillMaxWidth(),
                                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red),
@@ -1475,6 +1586,62 @@ fun ParentDashboard(
 
             Spacer(modifier = Modifier.height(30.dp))
         }
+    }
+
+    // Logout Confirmation Dialog
+    if (showLogoutConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutConfirmDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.ExitToApp,
+                        contentDescription = null,
+                        tint = Color(0xFFDC2626)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Log Out Confirmation",
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF1E1B4B)
+                    )
+                }
+            },
+            text = {
+                Text(
+                    text = "Are you sure you want to log out from the parent dashboard?",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF4B5563)
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showLogoutConfirmDialog = false
+                        viewModel.logOut()
+                        Toast.makeText(context, "Logged out successfully", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.testTag("confirm_logout_button")
+                ) {
+                    Text("Log Out", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showLogoutConfirmDialog = false },
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // App Guide & Instructions Dialog
+    if (showAppGuideDialog) {
+        ParentAppGuideDialog(onDismiss = { showAppGuideDialog = false })
     }
 
     // Delete Confirmation Dialog
@@ -1497,6 +1664,150 @@ fun ParentDashboard(
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Change Password Dialog
+    if (showChangePasswordDialog) {
+        AlertDialog(
+            onDismissRequest = { showChangePasswordDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = null,
+                        tint = Color(0xFF423870)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Change Parent Password",
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF423870)
+                    )
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Default password is student name (${student.name}).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+
+                    OutlinedTextField(
+                        value = oldPasswordInput,
+                        onValueChange = { oldPasswordInput = it },
+                        label = { Text("Current Password") },
+                        placeholder = { Text("Enter current password") },
+                        singleLine = true,
+                        visualTransformation = if (oldPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { oldPasswordVisible = !oldPasswordVisible }) {
+                                Icon(
+                                    imageVector = if (oldPasswordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                                    contentDescription = if (oldPasswordVisible) "Hide password" else "Show password",
+                                    tint = Color.Gray
+                                )
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("current_password_input")
+                    )
+
+                    OutlinedTextField(
+                        value = newPasswordInput,
+                        onValueChange = { newPasswordInput = it },
+                        label = { Text("New Password") },
+                        placeholder = { Text("Enter new password") },
+                        singleLine = true,
+                        visualTransformation = if (newPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { newPasswordVisible = !newPasswordVisible }) {
+                                Icon(
+                                    imageVector = if (newPasswordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                                    contentDescription = if (newPasswordVisible) "Hide password" else "Show password",
+                                    tint = Color.Gray
+                                )
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("new_password_input")
+                    )
+
+                    OutlinedTextField(
+                        value = confirmPasswordInput,
+                        onValueChange = { confirmPasswordInput = it },
+                        label = { Text("Confirm New Password") },
+                        placeholder = { Text("Re-enter new password") },
+                        singleLine = true,
+                        visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { confirmPasswordVisible = !confirmPasswordVisible }) {
+                                Icon(
+                                    imageVector = if (confirmPasswordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                                    contentDescription = if (confirmPasswordVisible) "Hide password" else "Show password",
+                                    tint = Color.Gray
+                                )
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("confirm_password_input")
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (oldPasswordInput.trim().isEmpty()) {
+                            Toast.makeText(context, "Please enter your current password", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+                        if (newPasswordInput.trim().isEmpty()) {
+                            Toast.makeText(context, "Please enter a new password", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+                        if (newPasswordInput.trim().length < 3) {
+                            Toast.makeText(context, "New password must be at least 3 characters", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+                        if (newPasswordInput.trim() != confirmPasswordInput.trim()) {
+                            Toast.makeText(context, "New passwords do not match", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+
+                        viewModel.changeParentPassword(
+                            phone = student.parentPhone,
+                            oldPass = oldPasswordInput,
+                            newPass = newPasswordInput,
+                            onSuccess = {
+                                Toast.makeText(context, "Password changed successfully!", Toast.LENGTH_LONG).show()
+                                showChangePasswordDialog = false
+                            },
+                            onError = { errorMsg ->
+                                Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
+                            }
+                        )
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF423870)),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.testTag("save_password_button")
+                ) {
+                    Text("Update Password", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showChangePasswordDialog = false }) {
                     Text("Cancel")
                 }
             }
@@ -1732,6 +2043,389 @@ private fun ParentAttendanceDonutChart(pct: Float, presentDays: Int) {
                         fontSize = 11.sp,
                         color = Color.Gray
                     )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ParentAppGuideDialog(onDismiss: () -> Unit) {
+    var selectedCategory by remember { mutableStateOf("All") }
+    val categories = listOf("All", "Performance", "Attendance", "Syllabus", "Test Papers", "Profile & Contact")
+
+    data class GuideItem(
+        val category: String,
+        val title: String,
+        val icon: androidx.compose.ui.graphics.vector.ImageVector,
+        val overview: String,
+        val steps: List<String>,
+        val tip: String
+    )
+
+    val guideItems = remember {
+        listOf(
+            GuideItem(
+                category = "Profile & Contact",
+                title = "Child Switcher & Sibling Management",
+                icon = Icons.Default.SwapHoriz,
+                overview = "Easily toggle between registered siblings or children linked under your mobile number without needing to log out.",
+                steps = listOf(
+                    "Look at the top section below the header to see available child pills.",
+                    "Tap on any child's name to instantly load their specific dashboard.",
+                    "All test marks, attendance records, and syllabus notes will update immediately."
+                ),
+                tip = "Additional children can be registered on the login screen using the same parent phone number."
+            ),
+            GuideItem(
+                category = "Performance",
+                title = "Marks Score & Subject Performance Analytics",
+                icon = Icons.Default.Analytics,
+                overview = "Gain full visibility into your child's academic performance with average scores and subject mark trend graphs.",
+                steps = listOf(
+                    "Check the 'Marks Score' summary card at the top for overall average percentage.",
+                    "In the Performance tab, tap subject chips (e.g., Physics, Math) above the line chart.",
+                    "View test-by-test progress, scores obtained, total max marks, and calculated percentage accuracy.",
+                    "Review the subject performance table for historical exam records."
+                ),
+                tip = "Track score trends over time to identify which subjects require extra revision or tutor guidance."
+            ),
+            GuideItem(
+                category = "Attendance",
+                title = "Attendance Donut Chart & Daily Logs",
+                icon = Icons.Default.EventAvailable,
+                overview = "Monitor your child's class attendance ratio and date-wise attendance logs recorded by the tutor.",
+                steps = listOf(
+                    "Select the 'Attendance' sub-tab on the main dashboard.",
+                    "Examine the circular Donut chart showing present vs total class days percentage.",
+                    "Scroll through the date-wise attendance log tagged with green 'Present' or red 'Absent' status labels."
+                ),
+                tip = "Attendance records update automatically whenever the tutor completes class attendance."
+            ),
+            GuideItem(
+                category = "Syllabus",
+                title = "Syllabus Notes & Portion Checklist",
+                icon = Icons.Default.MenuBook,
+                overview = "Stay synchronized with the topics covered in tuition and manage portion completion checklists.",
+                steps = listOf(
+                    "Navigate to the 'Syllabus Notes' sub-tab.",
+                    "Select subject tabs to filter portions by subject.",
+                    "Tap checkboxes next to topics as your child completes home revision.",
+                    "Tap the 'Edit Mode' button to manually add new custom portion topics or delete completed topics."
+                ),
+                tip = "Checkboxes automatically save so you can track ongoing revision alongside tutor lessons."
+            ),
+            GuideItem(
+                category = "Test Papers",
+                title = "Test Paper & Marksheet Co-Upload",
+                icon = Icons.Default.CloudUpload,
+                overview = "Upload photos or PDF marksheets of school tests directly to the tutor database for detailed evaluation.",
+                steps = listOf(
+                    "Tap 'Test Papers' from the top view switcher tabs.",
+                    "Tap 'Capture Photo' to snap a photo with your phone camera, or 'Upload File' to pick from gallery.",
+                    "Select the subject from the dropdown menu.",
+                    "Enter the marks obtained and maximum marks (e.g., 85 out of 100).",
+                    "Tap 'Upload File to Supabase' to save the marksheet to permanent records."
+                ),
+                tip = "Sharing school exam papers allows the tutor to analyze mistakes and tailor personalized exercises."
+            ),
+            GuideItem(
+                category = "Profile & Contact",
+                title = "Direct Tutor Call & Messaging",
+                icon = Icons.Default.Phone,
+                overview = "Get in touch directly with main tutor Amarmohan Sir for quick updates or queries.",
+                steps = listOf(
+                    "In the Performance tab, locate the 'Tutor Direct Contact' card.",
+                    "Tap 'Call Tutor' to dial 9986736360 directly from your phone.",
+                    "Tap 'Message' to launch direct SMS messaging with student reference pre-filled."
+                ),
+                tip = "Feel free to reach out during office hours regarding fee payments or special academic attention."
+            ),
+            GuideItem(
+                category = "Profile & Contact",
+                title = "Student Registry Editing",
+                icon = Icons.Default.Edit,
+                overview = "Keep your student's personal details, flat address, school, board, and enrolled subjects up to date.",
+                steps = listOf(
+                    "Tap 'Edit Student' from the top view switcher (or via Settings menu -> Edit Student Profile).",
+                    "Modify student name, parent phone, flat number, class standard, board, or school.",
+                    "Add new enrolled subjects or quick-edit marks directly in the subject registry table.",
+                    "Tap 'Save Changes' to update the record in the cloud database."
+                ),
+                tip = "Ensure parent phone number and flat address remain updated for emergency contacts."
+            ),
+            GuideItem(
+                category = "Profile & Contact",
+                title = "Account Security & Safe Log Out",
+                icon = Icons.Default.Lock,
+                overview = "Manage parent access security and log out safely with confirmation prompts.",
+                steps = listOf(
+                    "Tap the top-right Settings icon and select 'Change Password' to update your parent password (default password is student name).",
+                    "To log out, tap the top-left App Logo or Settings -> 'Log Out'.",
+                    "Confirm your choice on the pop-up prompt to exit securely."
+                ),
+                tip = "We recommend changing your parent password from the default student name to maintain private parent access."
+            )
+        )
+    }
+
+    val filteredItems = remember(selectedCategory) {
+        if (selectedCategory == "All") guideItems else guideItems.filter { it.category == selectedCategory }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.94f)
+                .fillMaxHeight(0.88f)
+                .clip(RoundedCornerShape(24.dp)),
+            color = Color(0xFFF9F8FD)
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Header Banner
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.horizontalGradient(
+                                colors = listOf(Color(0xFF5138B8), Color(0xFF7A68E6))
+                            )
+                        )
+                        .padding(20.dp)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(end = 36.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.2f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.MenuBook,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                text = "Parent Dashboard Guide",
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Interactive feature guide and instructions for every function on the parent dashboard.",
+                            fontSize = 12.sp,
+                            color = Color.White.copy(alpha = 0.9f)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .size(36.dp)
+                            .testTag("close_guide_dialog_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close Guide",
+                            tint = Color.White
+                        )
+                    }
+                }
+
+                // Filter Category Row
+                LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.White)
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(categories) { cat ->
+                        val isSelected = cat == selectedCategory
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = { selectedCategory = cat },
+                            label = {
+                                Text(
+                                    text = cat,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = Color(0xFF5138B8),
+                                selectedLabelColor = Color.White,
+                                containerColor = Color(0xFFF3F0FF),
+                                labelColor = Color(0xFF423870)
+                            ),
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                    }
+                }
+
+                Divider(color = Color(0xFFE5E7EB))
+
+                // Scrollable List of Feature Items
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    items(filteredItems) { item ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(42.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(Color(0xFFEEF2FF)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = item.icon,
+                                            contentDescription = null,
+                                            tint = Color(0xFF5138B8),
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = item.title,
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF1E1B4B)
+                                        )
+                                        Text(
+                                            text = item.category,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFF7A68E6)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Text(
+                                    text = item.overview,
+                                    fontSize = 13.sp,
+                                    color = Color(0xFF374151),
+                                    lineHeight = 18.sp
+                                )
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(Color(0xFFF9FAFB), RoundedCornerShape(10.dp))
+                                        .padding(10.dp)
+                                ) {
+                                    Text(
+                                        text = "How to use:",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF1F2937)
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    item.steps.forEachIndexed { index, step ->
+                                        Row(
+                                            modifier = Modifier.padding(vertical = 2.dp),
+                                            verticalAlignment = Alignment.Top
+                                        ) {
+                                            Text(
+                                                text = "${index + 1}. ",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF5138B8)
+                                            )
+                                            Text(
+                                                text = step,
+                                                fontSize = 12.sp,
+                                                color = Color(0xFF4B5563),
+                                                lineHeight = 16.sp
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(Color(0xFFFFFBEB), RoundedCornerShape(10.dp))
+                                        .border(1.dp, Color(0xFFFDE68A), RoundedCornerShape(10.dp))
+                                        .padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Lightbulb,
+                                        contentDescription = null,
+                                        tint = Color(0xFFD97706),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = item.tip,
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF92400E),
+                                        lineHeight = 15.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Bottom Action Button
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.White)
+                        .padding(16.dp)
+                ) {
+                    Button(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("guide_got_it_button"),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5138B8)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(
+                            text = "Got It, Back to Dashboard",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = Color.White
+                        )
+                    }
                 }
             }
         }

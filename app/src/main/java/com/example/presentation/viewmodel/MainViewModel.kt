@@ -154,16 +154,31 @@ class MainViewModel(private val repository: StudentRepository, private val conte
         refreshData()
     }
 
-    fun refreshData() {
+    fun refreshData(onComplete: ((Boolean) -> Unit)? = null) {
         viewModelScope.launch {
             _isRefreshing.value = true
-            repository.refreshFromSupabase()
+            // Reload preferences counters
+            _demosCount.value = prefs.getInt("reminders_demos_count", 5)
+            _checkedInsCount.value = prefs.getInt("reminders_checked_ins_count", 12)
+            _enquiriesCount.value = prefs.getInt("reminders_enquiries_count", 18)
+            _unitTestsCount.value = prefs.getInt("reminders_unit_tests_count", 7)
+            _attendanceDates.value = getPastSixMonthsDates()
+
+            val success = try {
+                repository.refreshFromSupabase()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error refreshing from repository", e)
+                false
+            }
+
             try {
                 refreshSchedulesAndAttendance()
             } catch (e: Exception) {
                 Log.e(TAG, "Error refreshing extra schedules and attendance records", e)
             }
+
             _isRefreshing.value = false
+            onComplete?.invoke(success)
         }
     }
 
@@ -659,15 +674,27 @@ class MainViewModel(private val repository: StudentRepository, private val conte
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
-        val cleanPhone = phone.trim().filter { it.isDigit() }
-        val savedPassword = prefs.getString("parent_password_$cleanPhone", null)
+        val sessionPhone = (prefs.getString("session_parent_phone", "") ?: "").trim().filter { it.isDigit() }
+        val inputPhone = phone.trim().filter { it.isDigit() }
+        val cleanPhone = if (inputPhone.isNotEmpty()) inputPhone else sessionPhone
+
+        val savedPassword = if (cleanPhone.isNotEmpty()) {
+            prefs.getString("parent_password_$cleanPhone", null)
+                ?: if (sessionPhone.isNotEmpty()) prefs.getString("parent_password_$sessionPhone", null) else null
+        } else {
+            null
+        }
 
         val matchingStudents = students.value.filter {
             val dbPhone = it.parentPhone.trim().filter { c -> c.isDigit() }
-            dbPhone == cleanPhone
+            (cleanPhone.isNotEmpty() && dbPhone == cleanPhone) ||
+                    (sessionPhone.isNotEmpty() && dbPhone == sessionPhone)
         }
 
-        val parentName = prefs.getString("parent_name_$cleanPhone", "Parent")
+        val parentName = if (cleanPhone.isNotEmpty()) prefs.getString("parent_name_$cleanPhone", "Parent") else "Parent"
+
+        val currentStudentSlNo = prefs.getString("session_student_sl_no", "")
+        val currentStudent = students.value.firstOrNull { it.slNo == currentStudentSlNo }
 
         val isOldValid = if (savedPassword != null) {
             oldPass.trim() == savedPassword.trim()
@@ -676,17 +703,32 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                 matchingStudents.any { student ->
                     oldPass.trim().lowercase() == student.name.trim().lowercase()
                 }
+            } else if (currentStudent != null) {
+                oldPass.trim().lowercase() == currentStudent.name.trim().lowercase()
             } else {
                 oldPass.trim().lowercase() == (parentName ?: "").trim().lowercase()
             }
         }
 
         if (!isOldValid) {
-            onError("Incorrect current password.")
+            onError("Incorrect current password. Default password is the student's name.")
             return
         }
 
-        prefs.edit().putString("parent_password_$cleanPhone", newPass.trim()).apply()
+        val editor = prefs.edit()
+        if (cleanPhone.isNotEmpty()) {
+            editor.putString("parent_password_$cleanPhone", newPass.trim())
+        }
+        if (sessionPhone.isNotEmpty()) {
+            editor.putString("parent_password_$sessionPhone", newPass.trim())
+        }
+        if (currentStudent != null) {
+            val studentPhone = currentStudent.parentPhone.trim().filter { it.isDigit() }
+            if (studentPhone.isNotEmpty()) {
+                editor.putString("parent_password_$studentPhone", newPass.trim())
+            }
+        }
+        editor.apply()
         onSuccess()
     }
 
