@@ -7,11 +7,11 @@ plugins {
 }
 
 android {
-  namespace = "com.example"
+  namespace = "com.amarmohan"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.tutorportal.vnmxep"
+    applicationId = "com.amarmohan"
     minSdk = 24
     targetSdk = 36
     versionCode = 1
