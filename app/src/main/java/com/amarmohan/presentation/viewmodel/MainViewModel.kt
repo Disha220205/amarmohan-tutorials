@@ -35,8 +35,144 @@ class MainViewModel(private val repository: StudentRepository, private val conte
     private val _session = MutableStateFlow<UserSession>(UserSession.Guest)
     val session: StateFlow<UserSession> = _session.asStateFlow()
 
-    // Students flow linked to Repository
-    val students: StateFlow<List<Student>> = repository.students
+    private val _isTutorTestMode = MutableStateFlow(prefs.getBoolean("is_tutor_test_mode", false))
+    val isTutorTestMode: StateFlow<Boolean> = _isTutorTestMode.asStateFlow()
+
+    private fun createInitialTestStudent(): Student {
+        return Student(
+            slNo = "SL_TEST_01",
+            name = "test",
+            parentPhone = "9191919191",
+            parentName = "Parent of test",
+            parentFlatNo = "101",
+            parentEmail = "test@example.com",
+            studentEmail = "test@example.com",
+            school = "AmarMohan Learning Centre",
+            board = "CBSE",
+            standard = "Class 10",
+            subjectsJson = "[\"Mathematics\",\"Physics\",\"Chemistry\"]",
+            syllabus = "Chapter 1: Real Numbers\nChapter 2: Polynomials\nChapter 3: Linear Equations",
+            testPapersJson = "[]",
+            remindersJson = "[]",
+            attendanceJson = "{}",
+            isFeesPaid = false,
+            dueAmount = 1500.0,
+            tuitionFee = 1500.0,
+            demoFee = 0.0
+        )
+    }
+
+    private fun loadTestStudents(): List<Student> {
+        val json = prefs.getString("test_students_cache", null)
+        if (json.isNullOrEmpty()) {
+            return listOf(createInitialTestStudent())
+        }
+        return try {
+            val list = JsonUtils.jsonToList(json, Student::class.java)
+            if (list.isEmpty()) listOf(createInitialTestStudent()) else list
+        } catch (e: Exception) {
+            listOf(createInitialTestStudent())
+        }
+    }
+
+    private fun saveTestStudents(list: List<Student>) {
+        val json = JsonUtils.listToJson(list, Student::class.java)
+        prefs.edit().putString("test_students_cache", json).apply()
+    }
+
+    private fun loadTestSchedules(): List<SessionSchedule> {
+        val json = prefs.getString("test_schedules_cache", null)
+        if (json.isNullOrEmpty()) return emptyList()
+        return try {
+            JsonUtils.jsonToList(json, SessionSchedule::class.java)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun saveTestSchedules(list: List<SessionSchedule>) {
+        val json = JsonUtils.listToJson(list, SessionSchedule::class.java)
+        prefs.edit().putString("test_schedules_cache", json).apply()
+    }
+
+    private fun loadTestAttendanceRecords(): List<AttendanceRecord> {
+        val json = prefs.getString("test_attendance_records_cache", null)
+        if (json.isNullOrEmpty()) return emptyList()
+        return try {
+            JsonUtils.jsonToList(json, AttendanceRecord::class.java)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun saveTestAttendanceRecords(list: List<AttendanceRecord>) {
+        val json = JsonUtils.listToJson(list, AttendanceRecord::class.java)
+        prefs.edit().putString("test_attendance_records_cache", json).apply()
+    }
+
+    private val _testStudents = MutableStateFlow<List<Student>>(loadTestStudents())
+
+    // Students flow dynamically linked to Repository or Test Mode
+    val students: StateFlow<List<Student>> = combine(
+        _session,
+        _isTutorTestMode,
+        repository.students,
+        _testStudents
+    ) { sessionState, isTest, repoStudents, testStudentsList ->
+        if (isTest || (sessionState is UserSession.Parent && testStudentsList.any { it.slNo == sessionState.studentSlNo })) {
+            testStudentsList
+        } else {
+            repoStudents
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, repository.students.value)
+
+    fun getStudent(slNo: String): Student? {
+        if (_isTutorTestMode.value || (_session.value is UserSession.Parent && (_session.value as UserSession.Parent).studentSlNo == slNo) || _testStudents.value.any { it.slNo == slNo }) {
+            val testFound = _testStudents.value.firstOrNull { it.slNo == slNo }
+            if (testFound != null) return testFound
+        }
+        return repository.getStudentBySlNo(slNo)
+    }
+
+    suspend fun persistStudentUpdate(student: Student) {
+        if (_isTutorTestMode.value || _testStudents.value.any { it.slNo == student.slNo }) {
+            val current = _testStudents.value.toMutableList()
+            val idx = current.indexOfFirst { it.slNo == student.slNo }
+            if (idx >= 0) {
+                current[idx] = student
+            } else {
+                current.add(student)
+            }
+            _testStudents.value = current
+            saveTestStudents(current)
+        } else {
+            repository.updateStudent(student)
+        }
+    }
+
+    suspend fun persistStudentAdd(student: Student) {
+        if (_isTutorTestMode.value || _testStudents.value.any { it.slNo == student.slNo }) {
+            val current = _testStudents.value.toMutableList()
+            current.removeAll { it.slNo == student.slNo }
+            current.add(student)
+            _testStudents.value = current
+            saveTestStudents(current)
+        } else {
+            repository.addStudent(student)
+        }
+    }
+
+    suspend fun persistStudentDelete(slNo: String) {
+        if (_isTutorTestMode.value || _testStudents.value.any { it.slNo == studentSlNo(slNo) }) {
+            val current = _testStudents.value.filter { it.slNo != slNo }
+            _testStudents.value = current
+            saveTestStudents(current)
+        } else {
+            repository.deleteStudent(slNo)
+        }
+    }
+
+    private fun studentSlNo(slNo: String): String = slNo
 
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
@@ -132,6 +268,15 @@ class MainViewModel(private val repository: StudentRepository, private val conte
     init {
         val sessionType = prefs.getString("session_type", "GUEST")
         val studentSlNo = prefs.getString("session_student_sl_no", "") ?: ""
+        val isTest = prefs.getBoolean("is_tutor_test_mode", false)
+        _isTutorTestMode.value = isTest
+
+        if (isTest) {
+            _testStudents.value = loadTestStudents()
+            _sessionSchedules.value = loadTestSchedules()
+            _attendanceRecords.value = loadTestAttendanceRecords()
+        }
+
         _session.value = when (sessionType) {
             "TUTOR" -> UserSession.Tutor
             "PARENT" -> if (studentSlNo.isNotEmpty()) UserSession.Parent(studentSlNo) else UserSession.Guest
@@ -151,10 +296,17 @@ class MainViewModel(private val repository: StudentRepository, private val conte
             }
         }
 
-        refreshData()
+        if (!_isTutorTestMode.value) {
+            refreshData()
+        }
     }
 
     fun refreshData(onComplete: ((Boolean) -> Unit)? = null) {
+        if (_isTutorTestMode.value && _session.value is UserSession.Tutor) {
+            _isRefreshing.value = false
+            onComplete?.invoke(true)
+            return
+        }
         viewModelScope.launch {
             _isRefreshing.value = true
             // Reload preferences counters
@@ -242,20 +394,40 @@ class MainViewModel(private val repository: StudentRepository, private val conte
     }
 
     suspend fun refreshSchedulesAndAttendance() {
-        val allSchedules = mutableListOf<SessionSchedule>()
-        val allRecords = mutableListOf<AttendanceRecord>()
-        students.value.forEach { s ->
-            val sScheds = repository.fetchSessionSchedules(s.slNo)
-            val sRecs = repository.fetchAttendanceRecords(s.slNo)
-            allSchedules.addAll(sScheds)
-            allRecords.addAll(sRecs)
+        if (_isTutorTestMode.value) return
+        val allSchedules = repository.fetchAllSessionSchedules().toMutableList()
+        val allRecords = repository.fetchAllAttendanceRecords().toMutableList()
+        if (allSchedules.isEmpty() && students.value.isNotEmpty()) {
+            students.value.forEach { s ->
+                val sScheds = repository.fetchSessionSchedules(s.slNo)
+                allSchedules.addAll(sScheds)
+            }
+        }
+        if (allRecords.isEmpty() && students.value.isNotEmpty()) {
+            students.value.forEach { s ->
+                val sRecs = repository.fetchAttendanceRecords(s.slNo)
+                allRecords.addAll(sRecs)
+            }
         }
         _sessionSchedules.value = projectSchedules(allSchedules)
         _attendanceRecords.value = allRecords
     }
 
+    fun getSupabaseUrl(): String = com.amarmohan.core.database.SupabaseProvider.supabaseUrl
+    fun getSupabaseAnonKey(): String = com.amarmohan.core.database.SupabaseProvider.supabaseAnonKey
+    fun isSupabaseConfigured(): Boolean = com.amarmohan.core.database.SupabaseProvider.isConfigured
+
+    fun updateSupabaseConfig(url: String, anonKey: String, onComplete: ((Boolean) -> Unit)? = null) {
+        repository.updateSupabaseConfig(url, anonKey)
+        refreshData(onComplete)
+    }
+
     // --- Session Schedules ---
     fun loadSchedules(studentSlNo: String) {
+        if (_isTutorTestMode.value || _testStudents.value.any { it.slNo == studentSlNo }) {
+            _sessionSchedules.value = loadTestSchedules().filter { it.studentSlNo == studentSlNo }
+            return
+        }
         viewModelScope.launch {
             val scheds = repository.fetchSessionSchedules(studentSlNo)
             val unfiltered = _sessionSchedules.value.filter { it.studentSlNo != studentSlNo && !it.id.contains("_projected_") } + scheds
@@ -267,6 +439,13 @@ class MainViewModel(private val repository: StudentRepository, private val conte
         viewModelScope.launch {
             val id = "sched_" + System.currentTimeMillis()
             val schedule = SessionSchedule(id, studentSlNo, topic, date, time, durationMinutes, false)
+            if (_isTutorTestMode.value || _testStudents.value.any { it.slNo == studentSlNo }) {
+                val updated = _sessionSchedules.value + schedule
+                _sessionSchedules.value = updated
+                saveTestSchedules(updated)
+                scheduleClassAlarmDirect(topic, date, time)
+                return@launch
+            }
             val success = repository.createSessionSchedule(schedule)
             if (success) {
                 refreshSchedulesAndAttendance()
@@ -307,6 +486,14 @@ class MainViewModel(private val repository: StudentRepository, private val conte
 
     fun markScheduleCompleted(schedule: SessionSchedule, completed: Boolean) {
         viewModelScope.launch {
+            if (_isTutorTestMode.value || _testStudents.value.any { it.slNo == schedule.studentSlNo }) {
+                val updated = _sessionSchedules.value.map {
+                    if (it.id == schedule.id) it.copy(isCompleted = completed) else it
+                }
+                _sessionSchedules.value = updated
+                saveTestSchedules(updated)
+                return@launch
+            }
             if (schedule.id.contains("_projected_")) {
                 // Create a real completed schedule for this date
                 val newId = "sched_" + java.util.UUID.randomUUID().toString()
@@ -322,6 +509,12 @@ class MainViewModel(private val repository: StudentRepository, private val conte
 
     fun deleteSessionSchedule(schedule: SessionSchedule) {
         viewModelScope.launch {
+            if (_isTutorTestMode.value || _testStudents.value.any { it.slNo == schedule.studentSlNo }) {
+                val updated = _sessionSchedules.value.filter { it.id != schedule.id }
+                _sessionSchedules.value = updated
+                saveTestSchedules(updated)
+                return@launch
+            }
             if (schedule.id.contains("_projected_")) {
                 // It's a projected schedule. To delete/cancel it, we save a [CANCELED] placeholder
                 val newId = "sched_" + java.util.UUID.randomUUID().toString()
@@ -348,6 +541,10 @@ class MainViewModel(private val repository: StudentRepository, private val conte
 
     // --- Attendance Records (Granular Table) ---
     fun loadAttendanceRecords(studentSlNo: String) {
+        if (_isTutorTestMode.value || _testStudents.value.any { it.slNo == studentSlNo }) {
+            _attendanceRecords.value = loadTestAttendanceRecords().filter { it.studentSlNo == studentSlNo }
+            return
+        }
         viewModelScope.launch {
             val recs = repository.fetchAttendanceRecords(studentSlNo)
             _attendanceRecords.value = (_attendanceRecords.value.filter { it.studentSlNo != studentSlNo } + recs)
@@ -357,8 +554,14 @@ class MainViewModel(private val repository: StudentRepository, private val conte
     fun addAttendanceRecord(studentSlNo: String, date: String, isPresent: Boolean, remarks: String = "") {
         viewModelScope.launch {
             val id = "att_${studentSlNo}_${date.replace("-", "")}"
-            repository.removeAttendanceRecord(id)
             val record = AttendanceRecord(id, studentSlNo, date, isPresent, remarks)
+            if (_isTutorTestMode.value || _testStudents.value.any { it.slNo == studentSlNo }) {
+                val updated = _attendanceRecords.value.filter { it.id != id } + record
+                _attendanceRecords.value = updated
+                saveTestAttendanceRecords(updated)
+                return@launch
+            }
+            repository.removeAttendanceRecord(id)
             val success = repository.createAttendanceRecord(record)
             if (success) {
                 refreshSchedulesAndAttendance()
@@ -368,6 +571,12 @@ class MainViewModel(private val repository: StudentRepository, private val conte
 
     fun deleteAttendanceRecord(id: String) {
         viewModelScope.launch {
+            if (_isTutorTestMode.value) {
+                val updated = _attendanceRecords.value.filter { it.id != id }
+                _attendanceRecords.value = updated
+                saveTestAttendanceRecords(updated)
+                return@launch
+            }
             val success = repository.removeAttendanceRecord(id)
             if (success) {
                 refreshSchedulesAndAttendance()
@@ -377,31 +586,59 @@ class MainViewModel(private val repository: StudentRepository, private val conte
 
     // Role-switching APIs
     fun logOut() {
+        _isTutorTestMode.value = false
         prefs.edit()
             .remove("session_type")
             .remove("session_parent_phone")
             .remove("session_student_sl_no")
+            .remove("is_tutor_test_mode")
             .apply()
         _session.value = UserSession.Guest
     }
 
     fun loginAsTutor(onSuccess: () -> Unit, onError: (String) -> Unit) {
-        val activeSessions = (prefs.getStringSet("tutor_active_sessions", emptySet()) ?: emptySet()).toMutableSet()
+        _isTutorTestMode.value = false
+        prefs.edit().putBoolean("is_tutor_test_mode", false).apply()
+
         var currentMyId = prefs.getString("my_tutor_session_id", "") ?: ""
         if (currentMyId.isEmpty()) {
             currentMyId = "tutor_device_" + System.currentTimeMillis()
             prefs.edit().putString("my_tutor_session_id", currentMyId).apply()
         }
 
-        if (activeSessions.size >= 3 && !activeSessions.contains(currentMyId)) {
-            onError("Maximum 3 active tutor logins exceeded in this database. Tutor side is disabled for others.")
-            return
-        }
-
+        val activeSessions = (prefs.getStringSet("tutor_active_sessions", emptySet()) ?: emptySet()).toMutableSet()
         activeSessions.add(currentMyId)
         prefs.edit()
             .putStringSet("tutor_active_sessions", activeSessions)
             .putString("session_type", "TUTOR")
+            .apply()
+        _session.value = UserSession.Tutor
+        refreshData {
+            // Refreshed backend
+        }
+        onSuccess()
+    }
+
+    /**
+     * Test mode login when PIN 123456 is entered.
+     * Opens a fully fresh and empty dashboard with only the student named "test".
+     */
+    fun loginAsTutorTestMode(onSuccess: () -> Unit, onError: (String) -> Unit) {
+        _isTutorTestMode.value = true
+        val testList = loadTestStudents()
+        _testStudents.value = testList
+        _sessionSchedules.value = loadTestSchedules()
+        _attendanceRecords.value = loadTestAttendanceRecords()
+        _demosCount.value = 0
+        _checkedInsCount.value = 0
+        _enquiriesCount.value = 0
+        _unitTestsCount.value = 0
+        _searchQuery.value = ""
+        _activeTutorTab.value = 0
+
+        prefs.edit()
+            .putString("session_type", "TUTOR")
+            .putBoolean("is_tutor_test_mode", true)
             .apply()
         _session.value = UserSession.Tutor
         onSuccess()
@@ -562,6 +799,36 @@ class MainViewModel(private val repository: StudentRepository, private val conte
 
         viewModelScope.launch {
             val cleanPhone = phone.trim().filter { it.isDigit() }
+            val cleanPass = password.trim().lowercase()
+
+            // Check if test student login from parent side (e.g. phone: 9191919191 or 123456, password: test or student name)
+            val testList = loadTestStudents()
+            val matchingTestStudent = testList.firstOrNull {
+                val dbPhone = it.parentPhone.trim().filter { c -> c.isDigit() }
+                cleanPhone == "9191919191" || cleanPhone == "123456" || cleanPhone == "1234567890" || dbPhone == cleanPhone || cleanPhone.contains("9191919191")
+            } ?: if (cleanPhone == "9191919191" || cleanPhone == "123456" || cleanPhone == "1234567890") testList.firstOrNull() else null
+
+            if (matchingTestStudent != null) {
+                val isTestPassValid = cleanPass == "test" ||
+                        cleanPass == "123456" ||
+                        cleanPass == matchingTestStudent.name.trim().lowercase() ||
+                        cleanPass == matchingTestStudent.parentPhone.trim().filter { it.isDigit() }
+                if (isTestPassValid) {
+                    _isTutorTestMode.value = true
+                    _testStudents.value = testList
+                    _sessionSchedules.value = loadTestSchedules()
+                    _attendanceRecords.value = loadTestAttendanceRecords()
+                    prefs.edit()
+                        .putString("session_type", "PARENT")
+                        .putString("session_parent_phone", phone.trim())
+                        .putString("session_student_sl_no", matchingTestStudent.slNo)
+                        .putBoolean("is_tutor_test_mode", true)
+                        .apply()
+                    _session.value = UserSession.Parent(matchingTestStudent.slNo)
+                    onSuccess()
+                    return@launch
+                }
+            }
 
             // Check if pre-enrolled
             val isPreEnrolled = students.value.any {
@@ -763,7 +1030,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
         }
 
         viewModelScope.launch {
-            val existing = repository.getStudentBySlNo(slNo)
+            val existing = getStudent(slNo)
             val base = existing ?: Student(slNo = slNo, name = name, parentPhone = phone, parentFlatNo = parentFlatNo)
 
             val updated = base.copy(
@@ -784,25 +1051,31 @@ class MainViewModel(private val repository: StudentRepository, private val conte
             val finalUpdated = updated.copy(dueAmount = calculatedDue)
 
             if (existing != null) {
-                repository.updateStudent(finalUpdated)
+                persistStudentUpdate(finalUpdated)
             } else {
-                repository.addStudent(finalUpdated)
+                persistStudentAdd(finalUpdated)
             }
-            refreshData()
+            if (!_isTutorTestMode.value) {
+                refreshData()
+            }
         }
     }
 
     fun updateStudent(student: Student) {
         viewModelScope.launch {
-            repository.updateStudent(student)
-            refreshData()
+            persistStudentUpdate(student)
+            if (!_isTutorTestMode.value) {
+                refreshData()
+            }
         }
     }
 
     fun deleteStudent(slNo: String) {
         viewModelScope.launch {
-            repository.deleteStudent(slNo)
-            refreshData()
+            persistStudentDelete(slNo)
+            if (!_isTutorTestMode.value) {
+                refreshData()
+            }
         }
     }
 
@@ -816,14 +1089,14 @@ class MainViewModel(private val repository: StudentRepository, private val conte
 
     fun toggleAttendance(studentSlNo: String, date: String) {
         viewModelScope.launch {
-            val student = repository.getStudentBySlNo(studentSlNo) ?: return@launch
+            val student = getStudent(studentSlNo) ?: return@launch
             val attendance = student.getAttendance().toMutableMap()
             val currentStatus = attendance[date] ?: false
             val newStatus = !currentStatus
             attendance[date] = newStatus
 
             val updated = student.withAttendance(attendance)
-            repository.updateStudent(updated)
+            persistStudentUpdate(updated)
 
             // Sync with attendance_records table
             addAttendanceRecord(studentSlNo, date, newStatus, "Recorded from Tutor Console")
@@ -832,7 +1105,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
 
     fun setAttendanceStatus(studentSlNo: String, date: String, status: Boolean?) {
         viewModelScope.launch {
-            val student = repository.getStudentBySlNo(studentSlNo) ?: return@launch
+            val student = getStudent(studentSlNo) ?: return@launch
             val attendance = student.getAttendance().toMutableMap()
             if (status == null) {
                 attendance.remove(date)
@@ -841,7 +1114,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
             }
 
             val updated = student.withAttendance(attendance)
-            repository.updateStudent(updated)
+            persistStudentUpdate(updated)
 
             // Sync with attendance_records table
             addAttendanceRecord(studentSlNo, date, status ?: false, "Recorded from Tutor Console")
@@ -855,7 +1128,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
     // Payment operations (Teacher / Tutor manual inputs)
     fun updateStudentPayment(studentSlNo: String, isPaid: Boolean, feeValue: Double) {
         viewModelScope.launch {
-            val student = repository.getStudentBySlNo(studentSlNo) ?: return@launch
+            val student = getStudent(studentSlNo) ?: return@launch
             val updatedStudent = student.copy(
                 isFeesPaid = isPaid,
                 tuitionFee = feeValue
@@ -864,28 +1137,28 @@ class MainViewModel(private val repository: StudentRepository, private val conte
             val updated = updatedStudent.copy(
                 dueAmount = calculatedDue
             )
-            repository.updateStudent(updated)
+            persistStudentUpdate(updated)
         }
     }
 
     fun updateStudentDueAmount(studentSlNo: String, dueValue: Double) {
         viewModelScope.launch {
-            val student = repository.getStudentBySlNo(studentSlNo) ?: return@launch
+            val student = getStudent(studentSlNo) ?: return@launch
             val updated = student.copy(
                 dueAmount = dueValue
             )
-            repository.updateStudent(updated)
+            persistStudentUpdate(updated)
         }
     }
 
     fun modifyDemoFee(studentSlNo: String, isIncrement: Boolean) {
         viewModelScope.launch {
-            val student = repository.getStudentBySlNo(studentSlNo) ?: return@launch
+            val student = getStudent(studentSlNo) ?: return@launch
             val delta = if (isIncrement) 500.0 else -500.0
             val currentDemo = student.demoFee
             val newDemo = (currentDemo + delta).coerceAtLeast(0.0)
             val updated = student.copy(demoFee = newDemo)
-            repository.updateStudent(updated)
+            persistStudentUpdate(updated)
         }
     }
 
@@ -943,7 +1216,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
 
     fun updateStudentPaymentForMonth(studentSlNo: String, month: String, isPaid: Boolean, feeValue: Double? = null) {
         viewModelScope.launch {
-            val student = repository.getStudentBySlNo(studentSlNo) ?: return@launch
+            val student = getStudent(studentSlNo) ?: return@launch
             val attendance = student.getAttendance().toMutableMap()
             val key = "fee_$month"
             attendance[key] = isPaid
@@ -966,7 +1239,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
             val calculatedDue = if (updated.isFeesPaid) 0.0 else calculateStudentDueAmount(updated)
             updated = updated.copy(dueAmount = calculatedDue)
 
-            repository.updateStudent(updated)
+            persistStudentUpdate(updated)
         }
     }
 
@@ -1565,9 +1838,9 @@ class MainViewModel(private val repository: StudentRepository, private val conte
     // Parent writing syllabus
     fun saveSyllabus(studentSlNo: String, text: String) {
         viewModelScope.launch {
-            val student = repository.getStudentBySlNo(studentSlNo) ?: return@launch
+            val student = getStudent(studentSlNo) ?: return@launch
             val updated = student.copy(syllabus = text)
-            repository.updateStudent(updated)
+            persistStudentUpdate(updated)
         }
     }
 
@@ -1649,7 +1922,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                 finalUri = "https://your-supabase-project.supabase.co/storage/v1/object/public/testpapers/$fileName"
             }
 
-            val student = repository.getStudentBySlNo(studentSlNo) ?: return@launch
+            val student = getStudent(studentSlNo) ?: return@launch
             val papers = student.getTestPapers().toMutableList()
             val newId = "paper_" + System.currentTimeMillis()
             val newPaper = TestPaper(
@@ -1663,7 +1936,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
             )
             papers.add(newPaper)
             val updated = student.withTestPapers(papers)
-            repository.updateStudent(updated)
+            persistStudentUpdate(updated)
 
             // Also automatically append to subjects/grades in performance metrics!
             if (marksObtained != null && totalMarks != null) {
@@ -1677,7 +1950,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                 )
                 subjects.add(newRecord)
                 val updatedWithScore = updated.withSubjects(subjects)
-                repository.updateStudent(updatedWithScore)
+                persistStudentUpdate(updatedWithScore)
             }
         }
     }
@@ -1721,7 +1994,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                 }
             }
 
-            val student = repository.getStudentBySlNo(studentSlNo) ?: return@launch
+            val student = getStudent(studentSlNo) ?: return@launch
             val papers = student.getTestPapers().map { paper ->
                 if (paper.id == paperId) {
                     paper.copy(tutorPhotoUri = finalTutorUri, status = "Completed")
@@ -1730,7 +2003,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                 }
             }
             val updated = student.withTestPapers(papers)
-            repository.updateStudent(updated)
+            persistStudentUpdate(updated)
         }
     }
 
@@ -1738,7 +2011,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
     fun addTestScore(studentSlNo: String, subject: String, score: Double, maxScore: Double, testType: String) {
         if (maxScore <= 0 || score < 0 || score > maxScore) return
         viewModelScope.launch {
-            val student = repository.getStudentBySlNo(studentSlNo) ?: return@launch
+            val student = getStudent(studentSlNo) ?: return@launch
             val subjects = student.getSubjects().toMutableList()
             val newRecord = SubjectMark(
                 subjectName = subject,
@@ -1749,14 +2022,14 @@ class MainViewModel(private val repository: StudentRepository, private val conte
             )
             subjects.add(newRecord)
             val updated = student.withSubjects(subjects)
-            repository.updateStudent(updated)
+            persistStudentUpdate(updated)
         }
     }
 
     // Update student's core subject enrollment list
     fun updateStudentSubjects(studentSlNo: String, subjectNames: List<String>) {
         viewModelScope.launch {
-            val student = repository.getStudentBySlNo(studentSlNo) ?: return@launch
+            val student = getStudent(studentSlNo) ?: return@launch
             val existingSubjectsMap = student.getSubjects().associateBy { it.subjectName }
             val updatedSubjects = subjectNames.map { name ->
                 existingSubjectsMap[name] ?: SubjectMark(
@@ -1768,14 +2041,14 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                 )
             }
             val updated = student.withSubjects(updatedSubjects)
-            repository.updateStudent(updated)
+            persistStudentUpdate(updated)
         }
     }
 
     // Parent/Teacher adds reminders
     fun addReminder(studentSlNo: String, text: String, isDemos: Boolean = false, isPayDay: Boolean = false, isImportant: Boolean = false, isByParent: Boolean = false) {
         viewModelScope.launch {
-            val student = repository.getStudentBySlNo(studentSlNo) ?: return@launch
+            val student = getStudent(studentSlNo) ?: return@launch
             val reminders = student.getReminders().toMutableList()
             val newId = "rem_" + System.currentTimeMillis()
             val newReminder = Reminder(
@@ -1790,27 +2063,27 @@ class MainViewModel(private val repository: StudentRepository, private val conte
             )
             reminders.add(newReminder)
             val updated = student.withReminders(reminders)
-            repository.updateStudent(updated)
+            persistStudentUpdate(updated)
         }
     }
 
     fun markReminderReadByTutor(studentSlNo: String, reminderId: String) {
         viewModelScope.launch {
-            val student = repository.getStudentBySlNo(studentSlNo) ?: return@launch
+            val student = getStudent(studentSlNo) ?: return@launch
             val reminders = student.getReminders().map { r ->
                 if (r.id == reminderId) r.copy(isReadByTutor = true) else r
             }
             val updated = student.withReminders(reminders)
-            repository.updateStudent(updated)
+            persistStudentUpdate(updated)
         }
     }
 
     fun removeReminder(studentSlNo: String, reminderId: String) {
         viewModelScope.launch {
-            val student = repository.getStudentBySlNo(studentSlNo) ?: return@launch
+            val student = getStudent(studentSlNo) ?: return@launch
             val reminders = student.getReminders().filter { it.id != reminderId }
             val updated = student.withReminders(reminders)
-            repository.updateStudent(updated)
+            persistStudentUpdate(updated)
         }
     }
 

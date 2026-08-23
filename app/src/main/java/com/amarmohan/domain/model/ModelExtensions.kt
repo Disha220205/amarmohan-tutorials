@@ -1,11 +1,17 @@
 package com.amarmohan.domain.model
 
+import com.amarmohan.core.database.AttendanceRecordNullSafeAdapter
+import com.amarmohan.core.database.SessionScheduleNullSafeAdapter
+import com.amarmohan.core.database.StudentNullSafeAdapter
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 
 object JsonUtils {
     val moshi: Moshi = Moshi.Builder()
+        .add(Student::class.java, StudentNullSafeAdapter())
+        .add(SessionSchedule::class.java, SessionScheduleNullSafeAdapter())
+        .add(AttendanceRecord::class.java, AttendanceRecordNullSafeAdapter())
         .addLast(KotlinJsonAdapterFactory())
         .build()
 
@@ -74,7 +80,7 @@ object JsonUtils {
 // Student extensions
 val ALLOWED_SUBJECTS = listOf(
     "Mathematics", "Biology", "Physics", "Chemistry", "Kannada", "Hindi",
-    "Science", "History", "Civics", "English 1", "English 2", "Geography","Computer Science"
+    "Science", "History", "Civics", "English 1", "English 2", "Geography"
 )
 
 fun Student.getSubjects(): List<SubjectMark> {

@@ -19,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalContext
@@ -29,9 +30,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.amarmohan.presentation.viewmodel.MainViewModel
+import com.amarmohan.presentation.viewmodel.UserSession
 import com.amarmohan.core.keyboard.moveFocusOnEnter
 import com.amarmohan.ui.theme.getResponsiveButtonShape
 import com.amarmohan.ui.theme.getResponsiveButtonFontSize
@@ -42,6 +45,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.core.*
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.text.style.TextOverflow
 
 enum class OnboardingState {
     STARTUP,
@@ -462,15 +466,23 @@ fun LoginScreen(
                                         Button(
                                             onClick = {
                                                 focusManager.clearFocus()
-                                                if (tutorPassword.trim() == "071014") {
+                                                val cleanPass = tutorPassword.trim()
+                                                if (cleanPass == "071014") {
                                                     viewModel.loginAsTutor(
                                                         onSuccess = {
-                                                            Toast.makeText(localContext, "Tutor login successful!", Toast.LENGTH_SHORT).show()
+                                                            Toast.makeText(localContext, "Tutor login successful! Live backend loaded.", Toast.LENGTH_SHORT).show()
+                                                        },
+                                                        onError = { err -> errorMessage = err }
+                                                    )
+                                                } else if (cleanPass == "123456") {
+                                                    viewModel.loginAsTutorTestMode(
+                                                        onSuccess = {
+                                                            Toast.makeText(localContext, "Test Mode: Fresh dashboard opened!", Toast.LENGTH_SHORT).show()
                                                         },
                                                         onError = { err -> errorMessage = err }
                                                     )
                                                 } else {
-                                                    errorMessage = "Incorrect tutor password. Please enter password (071014)."
+                                                    errorMessage = "Incorrect tutor password. Enter 071014 for Live backend or 123456 for Test mode."
                                                 }
                                             },
                                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFCEB1FC)),
@@ -487,178 +499,6 @@ fun LoginScreen(
                                             )
                                         }
                                     }
-                                }
-
-                                if (!isTutorMode) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.Center,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(text = "Don't have an account? ", color = Color.Gray, fontSize = 14.sp)
-                                        Text(
-                                            text = "Sign up",
-                                            color = Color(0xFFCEB1FC),
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 14.sp,
-                                            modifier = Modifier.clickable { screenState = OnboardingState.SIGNUP }
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text(
-                                    text = "🧿",
-                                    fontSize = 16.sp,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                        }
-                    }
-
-                    OnboardingState.SIGNUP -> {
-                        // 3. SIGN UP SCREEN (4 fields, custom Switcher)
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color.White)
-                                .verticalScroll(rememberScrollState()),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            TopographicWavyHeader(heightDp = 200)
-
-                            Column(
-                                modifier = Modifier
-                                    .responsiveContainer()
-                                    .padding(horizontal = 28.dp, vertical = 20.dp),
-                                verticalArrangement = Arrangement.spacedBy(14.dp)
-                            ) {
-                                Text(
-                                    text = "Sign up",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 34.sp,
-                                    color = Color(0xFF1E1A2C)
-                                )
-
-                                errorMessage?.let { ErrorBox(it) }
-
-                                // Only Parent registration allowed on signup.
-                                if (true) {
-                                    isTutorMode = false
-                                    // Parent Sign-up (Name, Phone number, Flat Number, Email)
-                                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        Text(text = "Name", fontWeight = FontWeight.Bold, color = Color.Gray, fontSize = 12.sp)
-                                        OutlinedTextField(
-                                            value = parentName,
-                                            onValueChange = { parentName = it },
-                                            placeholder = { Text("Enter parent's full name") },
-                                            singleLine = true,
-                                            leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null, tint = Color(0xFFCEB1FC)) },
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-
-                                        Text(text = "Phone number", fontWeight = FontWeight.Bold, color = Color.Gray, fontSize = 12.sp)
-                                        OutlinedTextField(
-                                            value = parentPhone,
-                                            onValueChange = { parentPhone = it },
-                                            placeholder = { Text("Enter parent's phone number") },
-                                            singleLine = true,
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                                            leadingIcon = { Icon(Icons.Filled.Phone, contentDescription = null, tint = Color(0xFFCEB1FC)) },
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-
-                                        Text(text = "Flat Number", fontWeight = FontWeight.Bold, color = Color.Gray, fontSize = 12.sp)
-                                        OutlinedTextField(
-                                            value = parentFlatNo,
-                                            onValueChange = { parentFlatNo = it },
-                                            placeholder = { Text("Enter Flat / House Number") },
-                                            singleLine = true,
-                                            leadingIcon = { Icon(Icons.Filled.Home, contentDescription = null, tint = Color(0xFFCEB1FC)) },
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-
-                                        Text(text = "Email", fontWeight = FontWeight.Bold, color = Color.Gray, fontSize = 12.sp)
-                                        OutlinedTextField(
-                                            value = parentEmail,
-                                            onValueChange = { parentEmail = it },
-                                            placeholder = { Text("Enter parent's email (optional)") },
-                                            singleLine = true,
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                                            leadingIcon = { Icon(Icons.Filled.Email, contentDescription = null, tint = Color(0xFFCEB1FC)) },
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-
-                                        Spacer(modifier = Modifier.height(12.dp))
-
-                                        Button(
-                                            onClick = {
-                                                if (parentName.isBlank() || parentPhone.isBlank()) {
-                                                    errorMessage = "Name and Phone number are required."
-                                                    return@Button
-                                                }
-                                                errorMessage = null
-                                                viewModel.signUpParent(
-                                                    name = parentName,
-                                                    phone = parentPhone,
-                                                    flatNo = parentFlatNo,
-                                                    email = parentEmail,
-                                                    onSuccess = {
-                                                        Toast.makeText(localContext, "Account registered! Try signing in.", Toast.LENGTH_LONG).show()
-                                                        screenState = OnboardingState.LOGIN
-                                                    },
-                                                    onError = { errorMessage = it }
-                                                )
-                                            },
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFCEB1FC)),
-                                            shape = getResponsiveButtonShape(),
-                                            modifier = Modifier
-                                                .align(Alignment.CenterHorizontally)
-                                                .responsiveButton()
-                                        ) {
-                                            Text("Sign Up", fontSize = getResponsiveButtonFontSize(), fontWeight = FontWeight.Bold, color = Color.White)
-                                        }
-                                    }
-                                } else {
-                                    // Tutor sign up information
-                                    Card(
-                                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF9C4)),
-                                        border = BorderStroke(1.dp, Color(0xFFFBC02D)),
-                                        shape = RoundedCornerShape(12.dp),
-                                        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)
-                                    ) {
-                                        Column(modifier = Modifier.padding(16.dp)) {
-                                            Text(
-                                                text = "Official Admin Action Only",
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color(0xFFF57F17),
-                                                fontSize = 16.sp
-                                            )
-                                            Spacer(modifier = Modifier.height(6.dp))
-                                            Text(
-                                                text = "Tutor registrations are strictly credentialed. Please login directly using the tutor password: 071014",
-                                                color = Color.DarkGray,
-                                                fontSize = 14.sp,
-                                                lineHeight = 20.sp
-                                            )
-                                        }
-                                    }
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.Center,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(text = "Already have an account? ", color = Color.Gray, fontSize = 14.sp)
-                                    Text(
-                                        text = "Login",
-                                        color = Color(0xFFCEB1FC),
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
-                                        modifier = Modifier.clickable { screenState = OnboardingState.LOGIN }
-                                    )
                                 }
 
                                 Spacer(modifier = Modifier.height(16.dp))

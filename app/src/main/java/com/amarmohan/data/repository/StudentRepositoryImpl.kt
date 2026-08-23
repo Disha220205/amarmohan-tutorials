@@ -14,7 +14,7 @@ import kotlinx.coroutines.withContext
 class StudentRepositoryImpl(private val context: Context) : StudentRepository {
     private val TAG = "StudentRepositoryImpl"
     private val prefs = context.getSharedPreferences("TutorPortalPrefs", Context.MODE_PRIVATE)
-    
+
     private val _students = MutableStateFlow<List<Student>>(emptyList())
     override val students: StateFlow<List<Student>> = _students.asStateFlow()
 
@@ -25,11 +25,18 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
     override val supabaseError: StateFlow<String?> = _supabaseError.asStateFlow()
 
     init {
+        SupabaseProvider.init(context)
         loadLocalStudents()
         // Initialize sample demo credentials if completely empty (helps preview immediately)
         if (_students.value.isEmpty()) {
             seedDemoData()
         }
+    }
+
+    override fun updateSupabaseConfig(url: String, key: String) {
+        SupabaseProvider.updateConfig(context, url, key)
+        _isSupabaseOnline.value = SupabaseProvider.isConfigured
+        _supabaseError.value = if (SupabaseProvider.isConfigured) null else "Supabase URL or Key is invalid."
     }
 
     private fun loadLocalStudents() {
@@ -50,6 +57,9 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
     }
 
     override suspend fun refreshFromSupabase(): Boolean = withContext(Dispatchers.IO) {
+        // Ensure local cached data is loaded into memory
+        loadLocalStudents()
+
         val api = SupabaseProvider.api
         if (api == null) {
             _isSupabaseOnline.value = false
@@ -59,15 +69,28 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
         try {
             val remoteList = api.getStudents()
             val currentLocal = _students.value
-            
-            // Build a merged collection to preserve locally created students (like Ward A/B drafts or offline profiles)
+
+            val remoteIds = remoteList.map { it.slNo }.toSet()
+            val syncedIds = prefs.getStringSet("synced_student_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
+
+            // Any student that was previously on Supabase (syncedIds contains it) but is not in remoteList (remoteIds does not contain it)
+            // is considered deleted on the server. So we remove them locally.
+            val toRemove = currentLocal.filter { localStudent ->
+                !remoteIds.contains(localStudent.slNo) && syncedIds.contains(localStudent.slNo)
+            }.map { it.slNo }.toSet()
+
+            // Build a merged collection to preserve locally created students
             // that are not yet on the remote DB, while updating with remote database changes.
-            val mergedMap = currentLocal.associateBy { it.slNo }.toMutableMap()
+            val mergedMap = currentLocal.filter { !toRemove.contains(it.slNo) }.associateBy { it.slNo }.toMutableMap()
             remoteList.forEach { remoteStudent ->
                 mergedMap[remoteStudent.slNo] = remoteStudent
             }
-            
+
             saveLocalStudents(mergedMap.values.toList())
+
+            // Update the set of synced student IDs
+            val updatedSyncedIds = (syncedIds + remoteIds - toRemove).toSet()
+            prefs.edit().putStringSet("synced_student_ids", updatedSyncedIds).apply()
             _isSupabaseOnline.value = true
             _supabaseError.value = null
             true
@@ -81,18 +104,21 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
             Log.e(TAG, errMsg, e)
             _supabaseError.value = errMsg
             _isSupabaseOnline.value = false
+            loadLocalStudents()
             false
         } catch (e: java.io.IOException) {
             val errMsg = "Network connection timed out. Please check your internet connection and Supabase endpoint."
             Log.e(TAG, errMsg, e)
             _supabaseError.value = errMsg
             _isSupabaseOnline.value = false
+            loadLocalStudents()
             false
         } catch (e: Exception) {
             val errMsg = "Connection Fail: ${e.localizedMessage ?: "Check table or credentials"}"
             Log.e(TAG, errMsg, e)
             _supabaseError.value = errMsg
             _isSupabaseOnline.value = false
+            loadLocalStudents()
             false
         }
     }
@@ -109,6 +135,10 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
             try {
                 val response = api.insertStudent(student)
                 if (response.isSuccessful) {
+                    val syncedIds = prefs.getStringSet("synced_student_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
+                    syncedIds.add(student.slNo)
+                    prefs.edit().putStringSet("synced_student_ids", syncedIds).apply()
+
                     _isSupabaseOnline.value = true
                     _supabaseError.value = null
                     return@withContext true
@@ -153,6 +183,10 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
         val current = _students.value.filter { it.slNo != slNo }
         saveLocalStudents(current)
 
+        val syncedIds = prefs.getStringSet("synced_student_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
+        syncedIds.remove(slNo)
+        prefs.edit().putStringSet("synced_student_ids", syncedIds).apply()
+
         val api = SupabaseProvider.api
         if (api != null) {
             try {
@@ -171,6 +205,16 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
     }
 
     // --- Session Schedules ---
+    override suspend fun fetchAllSessionSchedules(): List<SessionSchedule> = withContext(Dispatchers.IO) {
+        val api = SupabaseProvider.api ?: return@withContext emptyList()
+        try {
+            api.getSessionSchedules()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching all session schedules", e)
+            emptyList()
+        }
+    }
+
     override suspend fun fetchSessionSchedules(studentSlNo: String): List<SessionSchedule> = withContext(Dispatchers.IO) {
         val api = SupabaseProvider.api ?: return@withContext emptyList()
         try {
@@ -204,6 +248,16 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
     }
 
     // --- Attendance Records ---
+    override suspend fun fetchAllAttendanceRecords(): List<AttendanceRecord> = withContext(Dispatchers.IO) {
+        val api = SupabaseProvider.api ?: return@withContext emptyList()
+        try {
+            api.getAttendanceRecords()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching all attendance records", e)
+            emptyList()
+        }
+    }
+
     override suspend fun fetchAttendanceRecords(studentSlNo: String): List<AttendanceRecord> = withContext(Dispatchers.IO) {
         val api = SupabaseProvider.api ?: return@withContext emptyList()
         try {

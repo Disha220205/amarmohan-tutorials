@@ -116,32 +116,75 @@ interface SupabaseApi {
 object SupabaseProvider {
     private const val TAG = "SupabaseProvider"
 
-    // Fetch values from system BuildConfig (populated via .env/Secrets plugin)
-    val supabaseUrl: String = try {
-        BuildConfig.SUPABASE_URL.trim()
-    } catch (e: Exception) {
-        ""
+    private var customUrl: String? = null
+    private var customAnonKey: String? = null
+    private var cachedApi: SupabaseApi? = null
+
+    fun init(context: android.content.Context) {
+        val prefs = context.getSharedPreferences("TutorPortalPrefs", android.content.Context.MODE_PRIVATE)
+        customUrl = prefs.getString("supabase_custom_url", null)
+        customAnonKey = prefs.getString("supabase_custom_anon_key", null)
     }
 
-    val supabaseAnonKey: String = try {
-        BuildConfig.SUPABASE_ANON_KEY.trim()
-    } catch (e: Exception) {
-        ""
+    val supabaseUrl: String
+        get() {
+            val custom = customUrl?.trim()
+            if (!custom.isNullOrEmpty()) return custom
+            return try {
+                BuildConfig.SUPABASE_URL.trim()
+            } catch (e: Exception) {
+                ""
+            }
+        }
+
+    val supabaseAnonKey: String
+        get() {
+            val custom = customAnonKey?.trim()
+            if (!custom.isNullOrEmpty()) return custom
+            return try {
+                BuildConfig.SUPABASE_ANON_KEY.trim()
+            } catch (e: Exception) {
+                ""
+            }
+        }
+
+    val isConfigured: Boolean
+        get() {
+            val url = supabaseUrl
+            val key = supabaseAnonKey
+            return url.isNotEmpty() &&
+                    key.isNotEmpty() &&
+                    !url.contains("MY_SUPABASE_URL") &&
+                    !url.contains("your-project.supabase.co") &&
+                    !key.contains("your-anon-public-key")
+        }
+
+    fun updateConfig(context: android.content.Context, url: String, key: String) {
+        val cleanUrl = url.trim()
+        val cleanKey = key.trim()
+        customUrl = cleanUrl
+        customAnonKey = cleanKey
+        cachedApi = null
+        val prefs = context.getSharedPreferences("TutorPortalPrefs", android.content.Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString("supabase_custom_url", cleanUrl)
+            .putString("supabase_custom_anon_key", cleanKey)
+            .apply()
     }
 
-    val isConfigured: Boolean = supabaseUrl.isNotEmpty() && 
-            supabaseAnonKey.isNotEmpty() && 
-            !supabaseUrl.contains("MY_SUPABASE_URL")
+    val api: SupabaseApi?
+        get() {
+            if (!isConfigured) {
+                Log.w(TAG, "Supabase base URL or Anon Key is not properly configured. Operating in offline local mode.")
+                return null
+            }
+            if (cachedApi != null) return cachedApi
 
-    val api: SupabaseApi? by lazy {
-        if (!isConfigured) {
-            Log.w(TAG, "Supabase base URL or Anon Key is missing. Operating in offline local fallback mode.")
-            null
-        } else {
-            try {
-                // Ensure URL ends with a trailing slash
-                val baseUrl = if (supabaseUrl.endsWith("/")) supabaseUrl else "$supabaseUrl/"
-                
+            return try {
+                val url = supabaseUrl
+                val key = supabaseAnonKey
+                val baseUrl = if (url.endsWith("/")) url else "$url/"
+
                 val loggingInterceptor = HttpLoggingInterceptor().apply {
                     level = HttpLoggingInterceptor.Level.BODY
                 }
@@ -149,10 +192,10 @@ object SupabaseProvider {
                 val headerInterceptor = Interceptor { chain ->
                     val original = chain.request()
                     val requestBuilder = original.newBuilder()
-                        .header("apikey", supabaseAnonKey)
-                        .header("Authorization", "Bearer $supabaseAnonKey")
+                        .header("apikey", key)
+                        .header("Authorization", "Bearer $key")
                         .header("Content-Type", "application/json")
-                        .header("Prefer", "return=representation") // Returns full rows for postgrest inserts
+                        .header("Prefer", "return=representation")
                     val request = requestBuilder.build()
                     chain.proceed(request)
                 }
@@ -160,12 +203,15 @@ object SupabaseProvider {
                 val okHttpClient = OkHttpClient.Builder()
                     .addInterceptor(headerInterceptor)
                     .addInterceptor(loggingInterceptor)
-                    .connectTimeout(15, TimeUnit.SECONDS)
-                    .readTimeout(15, TimeUnit.SECONDS)
-                    .writeTimeout(15, TimeUnit.SECONDS)
+                    .connectTimeout(20, TimeUnit.SECONDS)
+                    .readTimeout(20, TimeUnit.SECONDS)
+                    .writeTimeout(20, TimeUnit.SECONDS)
                     .build()
 
                 val moshi = Moshi.Builder()
+                    .add(Student::class.java, StudentNullSafeAdapter())
+                    .add(SessionSchedule::class.java, SessionScheduleNullSafeAdapter())
+                    .add(AttendanceRecord::class.java, AttendanceRecordNullSafeAdapter())
                     .addLast(KotlinJsonAdapterFactory())
                     .build()
 
@@ -175,11 +221,12 @@ object SupabaseProvider {
                     .addConverterFactory(MoshiConverterFactory.create(moshi))
                     .build()
 
-                retrofit.create(SupabaseApi::class.java)
+                val instance = retrofit.create(SupabaseApi::class.java)
+                cachedApi = instance
+                instance
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to initialize Supabase Retrofit client.", e)
                 null
             }
         }
-    }
 }

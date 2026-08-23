@@ -1,5 +1,6 @@
 package com.amarmohan.presentation.screens
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -9,6 +10,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.layout.ContentScale
 import kotlinx.coroutines.launch
+import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,6 +18,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
@@ -26,6 +31,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -40,12 +46,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import coil.compose.AsyncImage
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.amarmohan.domain.model.*
@@ -424,6 +432,45 @@ fun TutorDashboard(
     }
 }
 
+@Composable
+fun TutorRefreshIconButton(
+    viewModel: MainViewModel,
+    modifier: Modifier = Modifier,
+    iconSize: androidx.compose.ui.unit.Dp = 24.dp
+) {
+    val context = LocalContext.current
+    val isRefreshing by viewModel.isRefreshing.collectAsState()
+
+    IconButton(
+        onClick = {
+            if (!isRefreshing) {
+                Toast.makeText(context, "Syncing & refreshing data...", Toast.LENGTH_SHORT).show()
+                viewModel.refreshData { success ->
+                    val statusMsg = if (success) "Data synced with server!" else "Local data refreshed!"
+                    Toast.makeText(context, statusMsg, Toast.LENGTH_SHORT).show()
+                }
+            }
+        },
+        enabled = !isRefreshing,
+        modifier = modifier.testTag("refresh_button")
+    ) {
+        if (isRefreshing) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(iconSize),
+                color = Color(0xFF423870),
+                strokeWidth = 2.dp
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Default.Refresh,
+                contentDescription = "Refresh",
+                tint = Color(0xFF423870),
+                modifier = Modifier.size(iconSize)
+            )
+        }
+    }
+}
+
 // ==========================================
 // CUSTOM TOP BAR WITH LOGOUT BUTTON INSTEAD OF SETTINGS
 // ==========================================
@@ -485,13 +532,7 @@ fun TutorTopBar(
                 }
             }
 
-            IconButton(onClick = { viewModel.refreshData() }) {
-                Icon(
-                    imageVector = Icons.Default.Refresh,
-                    contentDescription = "Refresh",
-                    tint = Color(0xFF423870)
-                )
-            }
+            TutorRefreshIconButton(viewModel = viewModel)
         }
     }
 }
@@ -593,21 +634,14 @@ fun TutorHomeScreen(
                             }
                         }
                         Spacer(modifier = Modifier.width(4.dp))
-                        IconButton(onClick = { viewModel.refreshData() }) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "Refresh",
-                                tint = Color(0xFF423870),
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
+                        TutorRefreshIconButton(viewModel = viewModel, iconSize = 28.dp)
                     }
                 }
             }
         }
 
         item {
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
         }
 
         // ===================================
@@ -3218,7 +3252,7 @@ fun StudentDetailOverlay(
     val tutorCustomSubjectsList = remember {
         mutableStateListOf(
             "Mathematics", "Biology", "Physics", "Chemistry", "Kannada", "Hindi",
-            "Science", "History", "Civics", "English 1", "English 2", "Geography","Computer Science"
+            "Science", "History", "Civics", "English 1", "English 2", "Geography"
         )
     }
 
@@ -5246,3 +5280,4 @@ fun TutorEnrollStudentScreen(
         }
     }
 }
+

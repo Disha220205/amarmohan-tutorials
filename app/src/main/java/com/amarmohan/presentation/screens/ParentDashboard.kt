@@ -6,6 +6,7 @@ import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -13,6 +14,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,6 +30,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
@@ -113,7 +120,6 @@ fun ParentDashboard(
     var showTestPaperSubjectMenu by remember { mutableStateOf(false) }
 
     // Confirmation dialog state
-    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var showLogoutConfirmDialog by remember { mutableStateOf(false) }
 
     // Change Password Dialog States
@@ -718,7 +724,7 @@ fun ParentDashboard(
                                     Button(
                                         onClick = {
                                             val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$tutorPhoneToContact")).apply {
-                                                putExtra("sms_body", "Hello Amarmohan Sir, regarding student ${student.name}.")
+                                                putExtra("sms_body", "Hello ma'am, regarding student ${student.name}.")
                                             }
                                             context.startActivity(intent)
                                         },
@@ -1497,18 +1503,6 @@ fun ParentDashboard(
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text("Change Parent Password", fontWeight = FontWeight.Bold)
                                 }
-
-                                OutlinedButton(
-                                    onClick = { showDeleteConfirmDialog = true },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red),
-                                    border = BorderStroke(1.dp, Color.Red),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    Icon(Icons.Default.DeleteForever, contentDescription = null)
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Delete Student Profile", fontWeight = FontWeight.Bold)
-                                }
                             }
                         }
                     }
@@ -1564,32 +1558,6 @@ fun ParentDashboard(
                     onClick = { showLogoutConfirmDialog = false },
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-
-    // Delete Confirmation Dialog
-    if (showDeleteConfirmDialog) {
-        AlertDialog(
-            onDismissRequest = { showDeleteConfirmDialog = false },
-            title = { Text("Delete Student Profile") },
-            text = { Text("Are you sure you want to permanently delete ${student.name} from the registry?") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showDeleteConfirmDialog = false
-                        viewModel.deleteStudent(student.slNo)
-                        Toast.makeText(context, "Student deleted", Toast.LENGTH_SHORT).show()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
-                ) {
-                    Text("Delete")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteConfirmDialog = false }) {
                     Text("Cancel")
                 }
             }
