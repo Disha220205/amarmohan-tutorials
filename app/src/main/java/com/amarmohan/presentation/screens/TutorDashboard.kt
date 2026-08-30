@@ -54,6 +54,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import coil.compose.AsyncImage
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.amarmohan.domain.model.*
@@ -554,6 +559,13 @@ fun TutorHomeScreen(
     val studentsList by viewModel.students.collectAsState()
     val attendanceDates by viewModel.attendanceDates.collectAsState()
     var showRemindersDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    LaunchedEffect(studentsList) {
+        if (studentsList.isNotEmpty()) {
+            viewModel.checkAndSendAutomaticBirthdayGreetings(context)
+        }
+    }
 
     // Pre-calculate unread and all reminders
     val allReminders = mutableListOf<Pair<Student, Reminder>>()
@@ -565,6 +577,10 @@ fun TutorHomeScreen(
     allReminders.sortByDescending { it.second.id }
 
     val unreadCount = allReminders.count { it.second.isByParent && !it.second.isReadByTutor }
+
+    val birthdayStudents = remember(studentsList) {
+        studentsList.filter { viewModel.isBirthdayToday(it.birthDate) }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -635,6 +651,132 @@ fun TutorHomeScreen(
                         }
                         Spacer(modifier = Modifier.width(4.dp))
                         TutorRefreshIconButton(viewModel = viewModel, iconSize = 28.dp)
+                    }
+                }
+            }
+        }
+
+        item {
+            var birthdaySmsTriggerCount by remember { mutableIntStateOf(0) }
+            var showAllStudentsBirthdayList by remember { mutableStateOf(false) }
+
+            val unsentBirthdayStudents = remember(studentsList, birthdaySmsTriggerCount) {
+                studentsList.filter { !viewModel.isBirthdaySmsSentToday(it.slNo) }
+            }
+
+            if (birthdayStudents.isNotEmpty()) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFDF2F8)),
+                    border = BorderStroke(1.dp, Color(0xFFFBCFE8)),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("🎂", fontSize = 22.sp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "Today's Student Birthday Celebration!",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF9D174D)
+                            )
+                        }
+                        Text(
+                            "Automatic SMS birthday greetings are scheduled for student birthdates. You can also send or resend birthday SMS instantly below:",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFB45309)
+                        )
+                        birthdayStudents.forEach { bStudent ->
+                            val isSmsSent = remember(bStudent.slNo, birthdaySmsTriggerCount) {
+                                viewModel.isBirthdaySmsSentToday(bStudent.slNo)
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color.White, RoundedCornerShape(10.dp))
+                                    .border(1.dp, Color(0xFFFCE7F3), RoundedCornerShape(10.dp))
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        bStudent.name,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF831843),
+                                        fontSize = 14.sp
+                                    )
+                                    Text(
+                                        "DOB: ${bStudent.birthDate.ifBlank { "Not set" }} • Parent: ${bStudent.parentPhone}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.Gray
+                                    )
+                                }
+
+                                if (!isSmsSent) {
+                                    Button(
+                                        onClick = {
+                                            viewModel.sendBirthdayGreetingManually(context, bStudent)
+                                            birthdaySmsTriggerCount++
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDB2777)),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                        modifier = Modifier.testTag("send_birthday_sms_${bStudent.slNo}")
+                                    ) {
+                                        Icon(Icons.Default.Send, contentDescription = "Send SMS", tint = Color.White, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Send Birthday SMS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                    }
+                                } else {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Surface(
+                                            color = Color(0xFFFDF2F8),
+                                            shape = RoundedCornerShape(8.dp),
+                                            border = BorderStroke(1.dp, Color(0xFFF472B6))
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(
+                                                    Icons.Filled.Verified,
+                                                    contentDescription = null,
+                                                    tint = Color(0xFFDB2777),
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text(
+                                                    "SMS Sent 🎂",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color(0xFF9D174D)
+                                                )
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        IconButton(
+                                            onClick = {
+                                                viewModel.sendBirthdayGreetingManually(context, bStudent)
+                                                birthdaySmsTriggerCount++
+                                            },
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Refresh,
+                                                contentDescription = "Resend SMS",
+                                                tint = Color(0xFFDB2777),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1294,12 +1436,25 @@ fun TutorStudentListScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = "🧿 " + s.name,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.DarkGray
-                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "🧿 " + s.name,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.DarkGray
+                                    )
+                                    val parentInfo = listOfNotNull(
+                                        if (s.parentName.isNotBlank()) "Parent: ${s.parentName}" else null,
+                                        if (s.parentPhone.isNotBlank()) s.parentPhone else null
+                                    ).joinToString(" • ")
+                                    if (parentInfo.isNotBlank()) {
+                                        Text(
+                                            text = parentInfo,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color(0xFF6D28D9)
+                                        )
+                                    }
+                                }
 
                                 if (!isEditMode) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1663,6 +1818,9 @@ fun TutorAttendanceScreen(
                                         .clickable {
                                             val newStatus = if (wasPresent == false) null else false
                                             viewModel.setAttendanceStatus(s.slNo, attendanceDate, newStatus)
+                                            if (newStatus == false) {
+                                                viewModel.sendAbsentNotificationSms(context, s.parentPhone, attendanceDate)
+                                            }
                                         }
                                         .padding(horizontal = 14.dp, vertical = 6.dp)
                                 ) {
@@ -2891,30 +3049,69 @@ fun TutorFeesScreen(
 // ==========================================
 
 @Composable
-fun MarksLineChart(subjects: List<SubjectMark>) {
-    val sampleSubjectsRaw = if (subjects.isNotEmpty()) subjects else listOf(
-        SubjectMark("English 1", 79.0, 100.0, "2026-06-01"),
-        SubjectMark("Mathematics", 85.0, 100.0, "2026-06-02"),
-        SubjectMark("Science", 68.0, 100.0, "2026-06-03"),
-        SubjectMark("History", 88.0, 100.0, "2026-06-04"),
-        SubjectMark("Mathematics", 92.0, 100.0, "2026-06-15"),
-        SubjectMark("Science", 75.0, 100.0, "2026-06-16"),
-        SubjectMark("English 1", 85.0, 100.0, "2026-06-17")
-    )
-
-    // Get unique subjects
-    val uniqueSubjects = sampleSubjectsRaw.map { it.subjectName }.distinct()
-    var selectedSubject by remember(uniqueSubjects) {
-        mutableStateOf(uniqueSubjects.firstOrNull() ?: "Mathematics")
+fun MarksLineChart(
+    subjects: List<SubjectMark>,
+    testPapers: List<TestPaper> = emptyList()
+) {
+    val combinedScores = remember(subjects, testPapers) {
+        val sList = subjects
+        val tpList = testPapers.filter { it.marksObtained != null && it.totalMarks != null }
+            .map { tp ->
+                SubjectMark(
+                    subjectName = tp.subjectName,
+                    marks = tp.marksObtained!!,
+                    maxMarks = tp.totalMarks!!,
+                    testDate = tp.testDate,
+                    testType = "Paper"
+                )
+            }
+        (sList + tpList).distinctBy { "${it.subjectName}_${it.testDate}_${it.marks}_${it.maxMarks}" }
     }
 
-    // Filter sample subjects by selected subject
-    val filteredSubjects = sampleSubjectsRaw.filter { it.subjectName == selectedSubject }
+    // Get unique subjects
+    val uniqueSubjects = remember(combinedScores) {
+        combinedScores.map { it.subjectName.trim() }.filter { it.isNotBlank() }.distinct()
+    }
+
+    if (uniqueSubjects.isEmpty()) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = BorderStroke(1.dp, Color(0xFFECE6FF)),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(28.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "No test marks recorded for this student yet.",
+                    color = Color.Gray,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+        return
+    }
+
+    var selectedSubject by remember(uniqueSubjects) {
+        mutableStateOf(uniqueSubjects.first())
+    }
+
+    // Filter by selected subject
+    val filteredSubjects = remember(combinedScores, selectedSubject) {
+        combinedScores.filter { it.subjectName.equals(selectedSubject, ignoreCase = true) }
+    }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(260.dp),
+            .height(270.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
         border = BorderStroke(1.dp, Color(0xFFECE6FF)),
         shape = RoundedCornerShape(16.dp)
@@ -2934,7 +3131,8 @@ fun MarksLineChart(subjects: List<SubjectMark>) {
                     )
                     Text(
                         if (filteredSubjects.isNotEmpty()) {
-                            "${(filteredSubjects.map { it.marks / it.maxMarks }.average() * 100).toInt()}% avg accuracy"
+                            val acc = (filteredSubjects.map { if (it.maxMarks > 0) (it.marks / it.maxMarks * 100) else 0.0 }.average()).toInt()
+                            "$acc% avg accuracy"
                         } else {
                             "0% accuracy"
                         },
@@ -2953,7 +3151,7 @@ fun MarksLineChart(subjects: List<SubjectMark>) {
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(uniqueSubjects) { subj ->
-                    val isSelected = subj == selectedSubject
+                    val isSelected = subj.equals(selectedSubject, ignoreCase = true)
                     Card(
                         colors = CardDefaults.cardColors(
                             containerColor = if (isSelected) Color(0xFF7C3AED) else Color(0xFFF3E8FF)
@@ -2983,7 +3181,7 @@ fun MarksLineChart(subjects: List<SubjectMark>) {
                         .weight(1f),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("No test records for this subject.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    Text("No test records for $selectedSubject.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 }
             } else {
                 androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize().weight(1f)) {
@@ -2991,7 +3189,7 @@ fun MarksLineChart(subjects: List<SubjectMark>) {
                     val height = size.height
                     val numGridLines = filteredSubjects.size.coerceAtLeast(1)
 
-                    // Vertical peach highlights
+                    // Vertical pastel highlights
                     val sectionWidth = width / numGridLines
                     for (i in 0 until numGridLines) {
                         if (i % 2 == 0) {
@@ -3003,7 +3201,7 @@ fun MarksLineChart(subjects: List<SubjectMark>) {
                         }
                     }
 
-                    // Dotted horizontal grid references
+                    // Horizontal grid lines
                     for (i in 1..3) {
                         val y = height * (i / 4f)
                         drawLine(
@@ -3016,29 +3214,100 @@ fun MarksLineChart(subjects: List<SubjectMark>) {
 
                     // Map out coordinates
                     val points = filteredSubjects.mapIndexed { idx, item ->
-                        val pct = (item.marks / item.maxMarks).toFloat().coerceIn(0f, 1f)
+                        val pct = (if (item.maxMarks > 0) (item.marks / item.maxMarks).toFloat() else 0f).coerceIn(0f, 1f)
                         val x = if (filteredSubjects.size <= 1) width / 2f else idx * (width / (filteredSubjects.size - 1))
                         val y = height - (pct * height * 0.8f) - (height * 0.1f)
                         androidx.compose.ui.geometry.Offset(x, y)
                     }
 
                     // Draw line curves
-                    for (idx in 0 until points.size - 1) {
-                        drawLine(
-                            color = Color(0xFF8B5CF6),
-                            start = points[idx],
-                            end = points[idx + 1],
-                            strokeWidth = 3f
-                        )
+                    if (points.size >= 2) {
+                        for (idx in 0 until points.size - 1) {
+                            drawLine(
+                                color = Color(0xFF8B5CF6),
+                                start = points[idx],
+                                end = points[idx + 1],
+                                strokeWidth = 3f
+                            )
+                        }
                     }
 
-                    // Node joints
-                    points.forEach { pt ->
+                    // Node joints and marks value badges
+                    points.forEachIndexed { idx, pt ->
+                        val item = filteredSubjects[idx]
+
+                        // Outer halo
                         drawCircle(
-                            color = Color(0xFF6D28D9),
-                            radius = 6f,
+                            color = Color(0x337C3AED),
+                            radius = 12.dp.toPx() / 2,
                             center = pt
                         )
+                        // Outer white ring
+                        drawCircle(
+                            color = Color.White,
+                            radius = 8.dp.toPx() / 2,
+                            center = pt
+                        )
+                        // Inner point
+                        drawCircle(
+                            color = Color(0xFF6D28D9),
+                            radius = 5.dp.toPx() / 2,
+                            center = pt
+                        )
+
+                        // Render marks badge over dot
+                        drawIntoCanvas { canvas ->
+                            val marksText = if (item.marks % 1.0 == 0.0 && item.maxMarks % 1.0 == 0.0) {
+                                "${item.marks.toInt()}/${item.maxMarks.toInt()}"
+                            } else {
+                                "${item.marks}/${item.maxMarks}"
+                            }
+
+                            val textPaint = Paint().apply {
+                                color = android.graphics.Color.WHITE
+                                textSize = 9.5f * density
+                                typeface = Typeface.DEFAULT_BOLD
+                                isAntiAlias = true
+                                textAlign = Paint.Align.CENTER
+                            }
+
+                            val bgPaint = Paint().apply {
+                                color = android.graphics.Color.parseColor("#4C1D95") // Deep Violet
+                                isAntiAlias = true
+                                style = Paint.Style.FILL
+                            }
+
+                            val borderPaint = Paint().apply {
+                                color = android.graphics.Color.WHITE
+                                isAntiAlias = true
+                                style = Paint.Style.STROKE
+                                strokeWidth = 1.2f * density
+                            }
+
+                            val textBounds = android.graphics.Rect()
+                            textPaint.getTextBounds(marksText, 0, marksText.length, textBounds)
+                            val textWidth = textBounds.width().toFloat()
+                            val textHeight = textBounds.height().toFloat()
+
+                            val padH = 5f * density
+                            val padV = 2.5f * density
+
+                            // If point is too close to top, show badge below, otherwise above
+                            val badgeCenterY = if (pt.y < 30f * density) pt.y + 16f * density else pt.y - 13f * density
+                            val rectLeft = (pt.x - textWidth / 2f - padH).coerceIn(2f * density, size.width - textWidth - padH * 2 - 2f * density)
+                            val rectRight = rectLeft + textWidth + padH * 2
+                            val rectTop = badgeCenterY - textHeight / 2f - padV
+                            val rectBottom = badgeCenterY + textHeight / 2f + padV
+                            val rectF = RectF(rectLeft, rectTop, rectRight, rectBottom)
+
+                            val cornerRadius = 5f * density
+                            canvas.nativeCanvas.drawRoundRect(rectF, cornerRadius, cornerRadius, bgPaint)
+                            canvas.nativeCanvas.drawRoundRect(rectF, cornerRadius, cornerRadius, borderPaint)
+
+                            val textBaseline = rectTop + padV + textHeight - textBounds.bottom
+                            val textCenterX = (rectLeft + rectRight) / 2f
+                            canvas.nativeCanvas.drawText(marksText, textCenterX, textBaseline, textPaint)
+                        }
                     }
                 }
 
@@ -3048,8 +3317,9 @@ fun MarksLineChart(subjects: List<SubjectMark>) {
                     horizontalArrangement = if (filteredSubjects.size <= 1) Arrangement.Center else Arrangement.SpaceBetween
                 ) {
                     filteredSubjects.forEach { s ->
+                        val displayDate = if (s.testDate.contains("-")) s.testDate.takeLast(5) else s.testDate
                         Text(
-                            text = if (s.testDate.isNotEmpty()) s.testDate.takeLast(5) else "${s.marks.toInt()}/${s.maxMarks.toInt()}",
+                            text = displayDate.ifEmpty { "${s.marks.toInt()}/${s.maxMarks.toInt()}" },
                             style = MaterialTheme.typography.labelSmall,
                             color = Color.Gray,
                             fontSize = 9.sp
@@ -3062,7 +3332,7 @@ fun MarksLineChart(subjects: List<SubjectMark>) {
 }
 
 @Composable
-fun AttendanceDonutChart(presentPercent: Float, totalDays: Int) {
+fun AttendanceDonutChart(presentPercent: Float, attendedDays: Int, totalDaysInMonth: Int = 30) {
     val present = presentPercent.coerceIn(0f, 1f)
     val absent = 1.0f - present
 
@@ -3087,8 +3357,8 @@ fun AttendanceDonutChart(presentPercent: Float, totalDays: Int) {
                 modifier = Modifier.align(Alignment.Start)
             )
             Text(
-                "$totalDays",
-                style = MaterialTheme.typography.titleLarge,
+                "$attendedDays / $totalDaysInMonth Days Present",
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF1F2937),
                 modifier = Modifier.align(Alignment.Start)
@@ -3241,8 +3511,10 @@ fun StudentDetailOverlay(
 
     // Core registry updates state
     var editName by remember { mutableStateOf(student.name) }
+    var editParentName by remember { mutableStateOf(student.parentName) }
     var editPhone by remember { mutableStateOf(student.parentPhone) }
     var editFlatNo by remember { mutableStateOf(student.parentFlatNo) }
+    var editBirthDate by remember { mutableStateOf(student.birthDate) }
     var editClass by remember { mutableStateOf(student.standard) }
     var editSchool by remember { mutableStateOf(student.school) }
     var editBoard by remember { mutableStateOf(student.board) }
@@ -3258,9 +3530,16 @@ fun StudentDetailOverlay(
 
     val subjects = student.getSubjects()
     val attendance = student.getAttendance()
-    val presentDays = attendance.count { it.value }
-    val totalDays = attendance.size.coerceAtLeast(1)
-    val attendancePct = presentDays.toFloat() / totalDays.toFloat()
+    val cal = java.util.Calendar.getInstance()
+    val daysInMonth = cal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+    val currentMonthKey = java.text.SimpleDateFormat("yyyy-MM", java.util.Locale.getDefault()).format(cal.time)
+    val monthAttendance = attendance.filterKeys { it.startsWith(currentMonthKey) && !it.startsWith("fee_") }
+    val presentDays = if (monthAttendance.isNotEmpty()) {
+        monthAttendance.count { it.value }
+    } else {
+        attendance.filterKeys { !it.startsWith("fee_") }.count { it.value }
+    }
+    val attendancePct = (presentDays.toFloat() / daysInMonth.toFloat()).coerceIn(0f, 1f)
 
     val avgScorePct = if (subjects.isNotEmpty()) {
         (subjects.map { it.marks / it.maxMarks }.average() * 100).toInt()
@@ -3369,6 +3648,50 @@ fun StudentDetailOverlay(
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF32236F)
                             )
+                            val parentDetail = listOfNotNull(
+                                if (student.parentName.isNotBlank()) "Parent: ${student.parentName}" else if (student.parentPhone.isNotBlank()) "Parent" else null,
+                                if (student.parentPhone.isNotBlank()) student.parentPhone else null
+                            ).joinToString(" • ")
+                            if (parentDetail.isNotBlank()) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(vertical = 2.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Person,
+                                        contentDescription = null,
+                                        tint = Color(0xFF7C3AED),
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = parentDetail,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFF6D28D9)
+                                    )
+                                }
+                            }
+                            if (student.birthDate.isNotBlank()) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(vertical = 2.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Cake,
+                                        contentDescription = null,
+                                        tint = Color(0xFFDB2777),
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "DOB: ${student.birthDate}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFF9D174D)
+                                    )
+                                }
+                            }
                             Text(
                                 text = "${student.standard} • ${student.board} • ${student.school}",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -3470,7 +3793,7 @@ fun StudentDetailOverlay(
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Column(modifier = Modifier.padding(14.dp)) {
-                                        Text("$presentDays/$totalDays", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color(0xFFEC4899))
+                                        Text("$presentDays/$daysInMonth", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color(0xFFEC4899))
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             Icon(imageVector = Icons.Default.FactCheck, contentDescription = null, modifier = Modifier.size(12.dp), tint = Color.Gray)
@@ -3554,9 +3877,25 @@ fun StudentDetailOverlay(
                             when (activeDashboardSubTab) {
                                 0 -> {
                                     // SECTION 1: PERFORMANCE GRAPHS & DETAILED TEST RECORDS WITH TEST PAPERS
-                                    MarksLineChart(subjects)
+                                    val testPapersList = student.getTestPapers()
+                                    MarksLineChart(subjects = subjects, testPapers = testPapersList)
 
-                                    if (subjects.isEmpty()) {
+                                    val allEvaluatedRecords = remember(subjects, testPapersList) {
+                                        val sList = subjects
+                                        val tpList = testPapersList.filter { it.marksObtained != null && it.totalMarks != null }
+                                            .map { tp ->
+                                                SubjectMark(
+                                                    subjectName = tp.subjectName,
+                                                    marks = tp.marksObtained!!,
+                                                    maxMarks = tp.totalMarks!!,
+                                                    testDate = tp.testDate,
+                                                    testType = "Paper"
+                                                )
+                                            }
+                                        (sList + tpList).distinctBy { "${it.subjectName}_${it.testDate}_${it.marks}_${it.maxMarks}" }
+                                    }
+
+                                    if (allEvaluatedRecords.isEmpty()) {
                                         Card(
                                             modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                                             colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -3570,32 +3909,189 @@ fun StudentDetailOverlay(
                                             )
                                         }
                                     } else {
-                                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            Text("Subject-wise Performance Records:", fontWeight = FontWeight.Bold, color = Color(0xFF32236F), style = MaterialTheme.typography.bodyMedium)
-                                            subjects.forEach { score ->
+                                        val studentChosenSubjects = remember(subjects, allEvaluatedRecords) {
+                                            (subjects.map { it.subjectName } + allEvaluatedRecords.map { it.subjectName }).filter { it.isNotBlank() }.distinct()
+                                        }
+                                        val expandedPerfSubjects = remember { mutableStateMapOf<String, Boolean>() }
+
+                                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text("Subject-wise Marks Breakdown :", fontWeight = FontWeight.Bold, color = Color(0xFF32236F), style = MaterialTheme.typography.bodyMedium)
+                                                if (studentChosenSubjects.isNotEmpty()) {
+                                                    Text("${studentChosenSubjects.size} Subjects", fontSize = 11.sp, color = Color(0xFF7C3AED), fontWeight = FontWeight.Bold)
+                                                }
+                                            }
+
+                                            // Render individual dropdown for all subjects chosen by the student (Subject 1 dropdown, Subject 2 dropdown, etc.)
+                                            studentChosenSubjects.forEachIndexed { index, subjName ->
+                                                val isExpanded = expandedPerfSubjects[subjName] ?: true
+                                                val subjRecords = allEvaluatedRecords.filter { it.subjectName.equals(subjName, ignoreCase = true) }
+                                                val primaryRecord = subjRecords.firstOrNull() ?: subjects.firstOrNull { it.subjectName.equals(subjName, ignoreCase = true) }
+                                                val marksVal = primaryRecord?.marks ?: 0.0
+                                                val maxMarksVal = primaryRecord?.maxMarks ?: 100.0
+                                                val pct = if (maxMarksVal > 0) ((marksVal / maxMarksVal) * 100).toInt() else 0
+                                                val statusColor = if (pct >= 80) Color(0xFF10B981) else if (pct >= 60) Color(0xFF6366F1) else Color(0xFFF59E0B)
+
                                                 Card(
                                                     modifier = Modifier.fillMaxWidth(),
                                                     colors = CardDefaults.cardColors(containerColor = Color.White),
-                                                    border = BorderStroke(1.dp, Color(0xFFEDE9FE))
+                                                    border = BorderStroke(1.dp, if (isExpanded) Color(0xFFC7D2FE) else Color(0xFFEDE9FE)),
+                                                    shape = RoundedCornerShape(12.dp)
                                                 ) {
-                                                    Row(
-                                                        modifier = Modifier.padding(12.dp),
-                                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                                        verticalAlignment = Alignment.CenterVertically
-                                                    ) {
-                                                        Column {
-                                                            Text(score.subjectName, fontWeight = FontWeight.Bold, color = Color(0xFF1F2937))
-                                                            Text("Type: ${score.testType} • Date: ${score.testDate}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                                        // Dropdown Header Row
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .background(if (isExpanded) Color(0xFFF5F3FF) else Color.White)
+                                                                .clickable { expandedPerfSubjects[subjName] = !isExpanded }
+                                                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                                                Box(
+                                                                    modifier = Modifier
+                                                                        .size(24.dp)
+                                                                        .clip(CircleShape)
+                                                                        .background(Color(0xFFEDE9FE)),
+                                                                    contentAlignment = Alignment.Center
+                                                                ) {
+                                                                    Text("${index + 1}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF6D28D9))
+                                                                }
+                                                                Spacer(modifier = Modifier.width(8.dp))
+                                                                Column {
+                                                                    Text(
+                                                                        text = "Subject ${index + 1}: $subjName",
+                                                                        fontWeight = FontWeight.Bold,
+                                                                        color = Color(0xFF1E1B4B),
+                                                                        fontSize = 14.sp
+                                                                    )
+                                                                    Text(
+                                                                        text = if (isExpanded) "Tap to collapse" else "Tap to view subject marks and evaluation history",
+                                                                        fontSize = 10.sp,
+                                                                        color = Color.Gray
+                                                                    )
+                                                                }
+                                                            }
+                                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                                Surface(
+                                                                    shape = RoundedCornerShape(6.dp),
+                                                                    color = statusColor.copy(alpha = 0.12f),
+                                                                    modifier = Modifier.padding(end = 6.dp)
+                                                                ) {
+                                                                    Text(
+                                                                        text = "${marksVal.toInt()}/${maxMarksVal.toInt()} ($pct%)",
+                                                                        fontSize = 11.sp,
+                                                                        fontWeight = FontWeight.Bold,
+                                                                        color = statusColor,
+                                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                                                    )
+                                                                }
+                                                                Icon(
+                                                                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                                                    contentDescription = "Toggle Dropdown",
+                                                                    tint = Color(0xFF6D28D9)
+                                                                )
+                                                            }
                                                         }
-                                                        Column(horizontalAlignment = Alignment.End) {
-                                                            Text(
-                                                                text = "${score.marks.toInt()} / ${score.maxMarks.toInt()}",
-                                                                fontWeight = FontWeight.Black,
-                                                                color = Color(0xFF7C3AED),
-                                                                style = MaterialTheme.typography.titleMedium
-                                                            )
-                                                            val percent = (score.marks / score.maxMarks * 100).toInt()
-                                                            Text("$percent% Acc", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+
+                                                        // Dropdown Body Content (Subject Marks Visual & Breakdown)
+                                                        if (isExpanded) {
+                                                            Column(
+                                                                modifier = Modifier
+                                                                    .fillMaxWidth()
+                                                                    .padding(14.dp),
+                                                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                                                            ) {
+                                                                Row(
+                                                                    modifier = Modifier.fillMaxWidth(),
+                                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                                    verticalAlignment = Alignment.CenterVertically
+                                                                ) {
+                                                                    Column {
+                                                                        Text("Marks Obtained", fontSize = 11.sp, color = Color.Gray)
+                                                                        Row(verticalAlignment = Alignment.Bottom) {
+                                                                            Text(
+                                                                                text = "${marksVal.toInt()}",
+                                                                                fontSize = 24.sp,
+                                                                                fontWeight = FontWeight.Black,
+                                                                                color = Color(0xFF1E1B4B)
+                                                                            )
+                                                                            Text(
+                                                                                text = " / ${maxMarksVal.toInt()}",
+                                                                                fontSize = 14.sp,
+                                                                                fontWeight = FontWeight.Bold,
+                                                                                color = Color.Gray,
+                                                                                modifier = Modifier.padding(bottom = 2.dp, start = 2.dp)
+                                                                            )
+                                                                        }
+                                                                    }
+
+                                                                    Column(horizontalAlignment = Alignment.End) {
+                                                                        val gradeTag = if (pct >= 90) "A+ Outstanding" else if (pct >= 75) "A Excellent" else if (pct >= 60) "B Good" else "Needs Attention"
+                                                                        Surface(
+                                                                            shape = RoundedCornerShape(8.dp),
+                                                                            color = statusColor.copy(alpha = 0.15f)
+                                                                        ) {
+                                                                            Text(
+                                                                                text = gradeTag,
+                                                                                fontSize = 11.sp,
+                                                                                fontWeight = FontWeight.Bold,
+                                                                                color = statusColor,
+                                                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                                            )
+                                                                        }
+                                                                        Text(
+                                                                            text = "Accuracy: $pct%",
+                                                                            fontSize = 11.sp,
+                                                                            fontWeight = FontWeight.SemiBold,
+                                                                            color = Color.Gray,
+                                                                            modifier = Modifier.padding(top = 2.dp)
+                                                                        )
+                                                                    }
+                                                                }
+
+                                                                Row(
+                                                                    modifier = Modifier
+                                                                        .fillMaxWidth()
+                                                                        .background(Color(0xFFF8FAFC), RoundedCornerShape(8.dp))
+                                                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                                ) {
+                                                                    Text(
+                                                                        text = "Evaluation: ${primaryRecord?.testType ?: "Monthly Test"}",
+                                                                        fontSize = 11.sp,
+                                                                        color = Color(0xFF475569),
+                                                                        fontWeight = FontWeight.Medium
+                                                                    )
+                                                                    Text(
+                                                                        text = "Date: ${primaryRecord?.testDate?.ifEmpty { "15-07-2026" } ?: "15-07-2026"}",
+                                                                        fontSize = 11.sp,
+                                                                        color = Color(0xFF64748B)
+                                                                    )
+                                                                }
+
+                                                                if (subjRecords.size > 1) {
+                                                                    Text("Historical Records for this Subject:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF475569))
+                                                                    subjRecords.forEach { rec ->
+                                                                        Row(
+                                                                            modifier = Modifier
+                                                                                .fillMaxWidth()
+                                                                                .background(Color(0xFFF1F5F9), RoundedCornerShape(6.dp))
+                                                                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                                                                            horizontalArrangement = Arrangement.SpaceBetween
+                                                                        ) {
+                                                                            Text("${rec.testType} (${rec.testDate})", fontSize = 10.sp, color = Color(0xFF334155))
+                                                                            Text("${rec.marks.toInt()}/${rec.maxMarks.toInt()}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF7C3AED))
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -3603,9 +4099,12 @@ fun StudentDetailOverlay(
                                         }
                                     }
                                 }
+
                                 1 -> {
-                                    // SECTION 2: ATTENDANCE CHANNELS & PAST 5 DAYS ATTENDANCE SHEET TOGGLE CHIPS
-                                    AttendanceDonutChart(attendancePct, presentDays)
+                                    // SECTION 2: ATTENDANCE CHANNELS & CALENDAR WITH ATTENDANCE LOG
+                                    AttendanceDonutChart(attendancePct, presentDays, daysInMonth)
+
+                                    ParentAttendanceCalendar(attendance = attendance)
 
                                     Card(
                                         modifier = Modifier.fillMaxWidth(),
@@ -3615,41 +4114,48 @@ fun StudentDetailOverlay(
                                     ) {
                                         Column(modifier = Modifier.padding(14.dp)) {
                                             Text(
-                                                text = "Past 5 Days Attendance Sheet (Read-only):",
+                                                text = "Attendance History Log:",
                                                 fontWeight = FontWeight.Bold,
                                                 color = Color(0xFF32236F),
                                                 style = MaterialTheme.typography.bodyMedium
                                             )
                                             Spacer(modifier = Modifier.height(10.dp))
 
-                                            // Calculated last 5 days
-                                            val daysList = listOf("2026-06-10", "2026-06-11", "2026-06-12", "2026-06-13", "2026-06-14")
-                                            daysList.forEach { dateStr ->
-                                                val isPresent = attendance[dateStr] ?: true
-                                                Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(vertical = 4.dp),
-                                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Text(dateStr, fontWeight = FontWeight.Medium)
-
-                                                    val statusText = if (isPresent) "Present" else "Absent"
-                                                    val containerColor = if (isPresent) Color(0xFFE8F5E9) else Color(0xFFFFEBEE)
-                                                    val contentColor = if (isPresent) Color(0xFF2E7D32) else Color(0xFFC62828)
-
-                                                    Box(
+                                            val sortedEntries = attendance.entries.sortedByDescending { it.key }
+                                            if (sortedEntries.isEmpty()) {
+                                                Text(
+                                                    "No attendance marked yet. Mark attendance from the Daily Attendance Sheet.",
+                                                    color = Color.Gray,
+                                                    fontSize = 12.sp,
+                                                    modifier = Modifier.padding(vertical = 6.dp)
+                                                )
+                                            } else {
+                                                sortedEntries.take(15).forEach { (dateStr, isPresent) ->
+                                                    Row(
                                                         modifier = Modifier
-                                                            .background(containerColor, shape = RoundedCornerShape(8.dp))
-                                                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                                                            .fillMaxWidth()
+                                                            .padding(vertical = 4.dp),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
                                                     ) {
-                                                        Text(
-                                                            text = statusText,
-                                                            color = contentColor,
-                                                            fontSize = 11.sp,
-                                                            fontWeight = FontWeight.Bold
-                                                        )
+                                                        Text(dateStr, fontWeight = FontWeight.Medium)
+
+                                                        val statusText = if (isPresent) "Present" else "Absent"
+                                                        val containerColor = if (isPresent) Color(0xFFE8F5E9) else Color(0xFFFFEBEE)
+                                                        val contentColor = if (isPresent) Color(0xFF2E7D32) else Color(0xFFC62828)
+
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .background(containerColor, shape = RoundedCornerShape(8.dp))
+                                                                .padding(horizontal = 12.dp, vertical = 4.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = statusText,
+                                                                color = contentColor,
+                                                                fontSize = 11.sp,
+                                                                fontWeight = FontWeight.Bold
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
@@ -4150,6 +4656,26 @@ fun StudentDetailOverlay(
                                         return@Button
                                     }
 
+                                    val scoreVal = attachmentMarksText.toDoubleOrNull()
+                                    val scoreMax = attachmentMaxMarksText.toDoubleOrNull()
+
+                                    if (scoreVal == null || attachmentMarksText.trim().isEmpty()) {
+                                        Toast.makeText(context, "Marks obtained is compulsory for uploading test paper!", Toast.LENGTH_SHORT).show()
+                                        return@Button
+                                    }
+                                    if (scoreMax == null || scoreMax <= 0) {
+                                        Toast.makeText(context, "Total Max Marks is compulsory and must be greater than zero!", Toast.LENGTH_SHORT).show()
+                                        return@Button
+                                    }
+                                    if (scoreVal < 0) {
+                                        Toast.makeText(context, "Marks obtained cannot be negative!", Toast.LENGTH_SHORT).show()
+                                        return@Button
+                                    }
+                                    if (scoreVal > scoreMax) {
+                                        Toast.makeText(context, "Marks obtained ($scoreVal) cannot be greater than Total Max Marks ($scoreMax)!", Toast.LENGTH_SHORT).show()
+                                        return@Button
+                                    }
+
                                     val savedPath = if (tutorCapturedBitmap != null) {
                                         viewModel.saveCapturedBitmap(tutorCapturedBitmap!!)
                                     } else {
@@ -4162,31 +4688,16 @@ fun StudentDetailOverlay(
                                     }
 
                                     val finalUri = savedPath
-                                    val scoreVal = attachmentMarksText.toDoubleOrNull()
-                                    val scoreMax = attachmentMaxMarksText.toDoubleOrNull() ?: 100.0
-
-                                    if (scoreMax <= 0) {
-                                        Toast.makeText(context, "Perfect score (Total Max Marks) must be greater than zero!", Toast.LENGTH_SHORT).show()
-                                        return@Button
-                                    }
-                                    if (scoreVal != null) {
-                                        if (scoreVal < 0) {
-                                            Toast.makeText(context, "Marks obtained cannot be negative!", Toast.LENGTH_SHORT).show()
-                                            return@Button
-                                        }
-                                        if (scoreVal > scoreMax) {
-                                            Toast.makeText(context, "Marks obtained ($scoreVal) cannot be greater than perfect score ($scoreMax)!", Toast.LENGTH_SHORT).show()
-                                            return@Button
-                                        }
-                                    }
+                                    val subjectUploaded = attachmentSubjectText.trim()
 
                                     // Submit on active student registry
-                                    viewModel.uploadTestPaper(student.slNo, attachmentSubjectText.trim(), scoreVal, scoreMax, finalUri)
-                                    if (scoreVal != null) {
-                                        viewModel.addTestScore(student.slNo, attachmentSubjectText.trim(), scoreVal, scoreMax, "Co-Upload")
-                                    }
+                                    viewModel.uploadTestPaper(student.slNo, subjectUploaded, scoreVal, scoreMax, finalUri)
+                                    viewModel.addTestScore(student.slNo, subjectUploaded, scoreVal, scoreMax, "Co-Upload")
 
-                                    Toast.makeText(context, "Shared on Supabase Storage bucket securely!", Toast.LENGTH_SHORT).show()
+                                    // Send SMS notification to parent
+                                    viewModel.sendTestPaperUploadedSms(context, student.parentPhone, subjectUploaded)
+
+                                    Toast.makeText(context, "Test paper uploaded & SMS notification sent to parent!", Toast.LENGTH_SHORT).show()
                                     attachmentSubjectText = ""
                                     attachmentMarksText = ""
                                     attachedPhotoUri = null
@@ -4331,7 +4842,15 @@ fun StudentDetailOverlay(
                                                                         paper.id,
                                                                         "https://supabase-bucket/tutor_verified_${System.currentTimeMillis()}.jpg"
                                                                     )
-                                                                    Toast.makeText(context, "Co-Signed mark verified!", Toast.LENGTH_SHORT).show()
+                                                                    viewModel.sendTestPaperVerifiedSms(
+                                                                        context = context,
+                                                                        parentPhone = student.parentPhone,
+                                                                        studentName = student.name,
+                                                                        subject = paper.subjectName,
+                                                                        marksObtained = paper.marksObtained,
+                                                                        totalMarks = paper.totalMarks
+                                                                    )
+                                                                    Toast.makeText(context, "Test paper verified & SMS sent to parent!", Toast.LENGTH_SHORT).show()
                                                                 },
                                                                 colors = ButtonDefaults.buttonColors(
                                                                     containerColor = Color(0xFFF3EDFF),
@@ -4341,7 +4860,7 @@ fun StudentDetailOverlay(
                                                             ) {
                                                                 Icon(Icons.Filled.Verified, contentDescription = null, modifier = Modifier.size(16.dp))
                                                                 Spacer(modifier = Modifier.width(4.dp))
-                                                                Text("Tutor Co-Sign Co-Upload")
+                                                                Text("Tutor Co-Sign Co-Upload & Verify")
                                                             }
                                                         } else {
                                                             Row(
@@ -4386,62 +4905,159 @@ fun StudentDetailOverlay(
                                 shape = RoundedCornerShape(12.dp)
                             ) {
                                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Filled.Edit, contentDescription = null, tint = Color(0xFF7A68E6), modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Enrolled Subjects & Marks Ledger", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall, color = Color(0xFF1E1A2C))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Filled.Edit, contentDescription = null, tint = Color(0xFF7A68E6), modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("Enrolled Subjects & Marks Ledger", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall, color = Color(0xFF1E1A2C))
+                                        }
+                                        if (editSubjectsList.isNotEmpty()) {
+                                            Text("${editSubjectsList.size} Subjects", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF7C3AED))
+                                        }
                                     }
 
                                     Text("Add, delete, or quick-edit student subjects here. Note: Changes are persistent only on saving below.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
 
+                                    val expandedLedgerSubjects = remember { mutableStateMapOf<String, Boolean>() }
+
                                     if (editSubjectsList.isEmpty()) {
                                         Text("No subjects registered for this student yet.", style = MaterialTheme.typography.bodySmall, color = Color.Red, modifier = Modifier.padding(vertical = 4.dp))
                                     } else {
-                                        editSubjectsList.forEach { subItem ->
+                                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                             Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .background(Color.White, RoundedCornerShape(10.dp))
-                                                    .border(1.dp, Color(0xFFECEBFF), RoundedCornerShape(10.dp))
-                                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                modifier = Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.SpaceBetween,
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                Column(modifier = Modifier.weight(1f)) {
-                                                    Text(subItem.subjectName, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFF32236F))
-                                                    Text("Marks: ${subItem.marks.toInt()} / ${subItem.maxMarks.toInt()}", fontSize = 11.sp, color = Color.Gray)
-                                                }
+                                                Text("Subject-wise Marks Ledger :", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF32236F))
+                                                Text("${editSubjectsList.size} Subjects", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4F46E5))
+                                            }
 
-                                                var quickMarksInput by remember(subItem.subjectName) { mutableStateOf(subItem.marks.toString()) }
-                                                androidx.compose.material3.OutlinedTextField(
-                                                    value = quickMarksInput,
-                                                    onValueChange = { newValue ->
-                                                        quickMarksInput = newValue
-                                                        val cleanNum = newValue.toDoubleOrNull() ?: 0.0
-                                                        editSubjectsList = editSubjectsList.map { item ->
-                                                            if (item.subjectName == subItem.subjectName) item.copy(marks = cleanNum) else item
-                                                        }
-                                                    },
-                                                    label = { Text("Score", fontSize = 8.sp) },
-                                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                                    modifier = Modifier
-                                                        .width(80.dp)
-                                                        .padding(end = 4.dp),
-                                                    singleLine = true,
-                                                    shape = RoundedCornerShape(6.dp)
-                                                )
+                                            // Render individual dropdown for all subjects chosen by the student (Subject 1 dropdown, Subject 2 dropdown, etc.)
+                                            editSubjectsList.forEachIndexed { index, subItem ->
+                                                val isSubjExpanded = expandedLedgerSubjects[subItem.subjectName] ?: true
+                                                val pct = if (subItem.maxMarks > 0) ((subItem.marks / subItem.maxMarks) * 100).toInt() else 0
+                                                val statusColor = if (pct >= 80) Color(0xFF10B981) else if (pct >= 60) Color(0xFF6366F1) else Color(0xFFF59E0B)
 
-                                                IconButton(
-                                                    onClick = {
-                                                        editSubjectsList = editSubjectsList.filter { it.subjectName != subItem.subjectName }
-                                                    }
+                                                Card(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                                                    border = BorderStroke(1.dp, if (isSubjExpanded) Color(0xFFC7D2FE) else Color(0xFFECEBFF)),
+                                                    shape = RoundedCornerShape(10.dp)
                                                 ) {
-                                                    Icon(Icons.Filled.Delete, contentDescription = "Delete Subject", tint = Color.Red, modifier = Modifier.size(18.dp))
+                                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                                        // Subject Dropdown Header Row
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .background(if (isSubjExpanded) Color(0xFFF5F3FF) else Color.White)
+                                                                .clickable { expandedLedgerSubjects[subItem.subjectName] = !isSubjExpanded }
+                                                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                                                Box(
+                                                                    modifier = Modifier
+                                                                        .size(22.dp)
+                                                                        .clip(CircleShape)
+                                                                        .background(Color(0xFFEEF2FF)),
+                                                                    contentAlignment = Alignment.Center
+                                                                ) {
+                                                                    Text("${index + 1}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4F46E5))
+                                                                }
+                                                                Spacer(modifier = Modifier.width(8.dp))
+                                                                Column {
+                                                                    Text(
+                                                                        text = "Subject ${index + 1}: ${subItem.subjectName}",
+                                                                        fontWeight = FontWeight.Bold,
+                                                                        fontSize = 13.sp,
+                                                                        color = Color(0xFF1E1A2C)
+                                                                    )
+                                                                    Text(
+                                                                        text = if (isSubjExpanded) "Tap to collapse dropdown" else "Tap to expand & edit marks",
+                                                                        fontSize = 9.sp,
+                                                                        color = Color.Gray
+                                                                    )
+                                                                }
+                                                            }
+                                                            Icon(
+                                                                imageVector = if (isSubjExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                                                contentDescription = "Toggle Subject Dropdown",
+                                                                tint = Color(0xFF4F46E5),
+                                                                modifier = Modifier.size(20.dp)
+                                                            )
+                                                        }
+
+                                                        // Subject Dropdown Body
+                                                        if (isSubjExpanded) {
+                                                            Column(
+                                                                modifier = Modifier
+                                                                    .fillMaxWidth()
+                                                                    .padding(12.dp),
+                                                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                                            ) {
+                                                                // Marks Edit Fields
+                                                                Row(
+                                                                    modifier = Modifier.fillMaxWidth(),
+                                                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                                    verticalAlignment = Alignment.CenterVertically
+                                                                ) {
+                                                                    var quickMarksInput by remember(subItem.subjectName, subItem.marks) { mutableStateOf(if (subItem.marks % 1.0 == 0.0) subItem.marks.toInt().toString() else subItem.marks.toString()) }
+                                                                    var quickMaxMarksInput by remember(subItem.subjectName, subItem.maxMarks) { mutableStateOf(if (subItem.maxMarks % 1.0 == 0.0) subItem.maxMarks.toInt().toString() else subItem.maxMarks.toString()) }
+
+                                                                    androidx.compose.material3.OutlinedTextField(
+                                                                        value = quickMarksInput,
+                                                                        onValueChange = { newValue ->
+                                                                            quickMarksInput = newValue
+                                                                            val cleanNum = newValue.toDoubleOrNull() ?: 0.0
+                                                                            editSubjectsList = editSubjectsList.map { item ->
+                                                                                if (item.subjectName == subItem.subjectName) item.copy(marks = cleanNum) else item
+                                                                            }
+                                                                        },
+                                                                        label = { Text("Score", fontSize = 9.sp) },
+                                                                        modifier = Modifier.weight(1f),
+                                                                        shape = RoundedCornerShape(8.dp),
+                                                                        singleLine = true,
+                                                                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                                    )
+
+                                                                    androidx.compose.material3.OutlinedTextField(
+                                                                        value = quickMaxMarksInput,
+                                                                        onValueChange = { newValue ->
+                                                                            quickMaxMarksInput = newValue
+                                                                            val cleanNum = newValue.toDoubleOrNull() ?: 100.0
+                                                                            editSubjectsList = editSubjectsList.map { item ->
+                                                                                if (item.subjectName == subItem.subjectName) item.copy(maxMarks = cleanNum) else item
+                                                                            }
+                                                                        },
+                                                                        label = { Text("Max", fontSize = 9.sp) },
+                                                                        modifier = Modifier.weight(1f),
+                                                                        shape = RoundedCornerShape(8.dp),
+                                                                        singleLine = true,
+                                                                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, color = Color.Gray)
+                                                                    )
+
+                                                                    IconButton(
+                                                                        onClick = {
+                                                                            editSubjectsList = editSubjectsList.filter { it.subjectName != subItem.subjectName }
+                                                                        },
+                                                                        modifier = Modifier.size(36.dp)
+                                                                    ) {
+                                                                        Icon(Icons.Filled.Delete, contentDescription = "Remove Subject", tint = Color(0xFFEF4444), modifier = Modifier.size(18.dp))
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
                                     }
-
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Divider(color = Color(0xFFEADBFC))
                                     Spacer(modifier = Modifier.height(2.dp))
@@ -4519,14 +5135,23 @@ fun StudentDetailOverlay(
 
                             Divider(modifier = Modifier.padding(vertical = 12.dp))
 
-                            Text("Core student Registry parameters (Database):", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                            Text("Core Student Registry Parameters (* All Compulsory):", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Color(0xFF32236F))
 
                             val localFocusManager = androidx.compose.ui.platform.LocalFocusManager.current
 
                             androidx.compose.material3.OutlinedTextField(
                                 value = editName,
                                 onValueChange = { editName = it },
-                                label = { Text("Student Name") },
+                                label = { Text("Student Full Name * (Compulsory)") },
+                                modifier = Modifier.fillMaxWidth().moveFocusOnEnter(localFocusManager, androidx.compose.ui.focus.FocusDirection.Next),
+                                shape = RoundedCornerShape(10.dp),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
+                                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = { localFocusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Next) })
+                            )
+                            androidx.compose.material3.OutlinedTextField(
+                                value = editParentName,
+                                onValueChange = { editParentName = it },
+                                label = { Text("Parent Full Name * (Compulsory)") },
                                 modifier = Modifier.fillMaxWidth().moveFocusOnEnter(localFocusManager, androidx.compose.ui.focus.FocusDirection.Next),
                                 shape = RoundedCornerShape(10.dp),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
@@ -4535,7 +5160,7 @@ fun StudentDetailOverlay(
                             androidx.compose.material3.OutlinedTextField(
                                 value = editPhone,
                                 onValueChange = { editPhone = it },
-                                label = { Text("Parent Mobile Phone") },
+                                label = { Text("Parent Mobile Phone * (Compulsory)") },
                                 modifier = Modifier.fillMaxWidth().moveFocusOnEnter(localFocusManager, androidx.compose.ui.focus.FocusDirection.Next),
                                 shape = RoundedCornerShape(10.dp),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
@@ -4544,7 +5169,17 @@ fun StudentDetailOverlay(
                             androidx.compose.material3.OutlinedTextField(
                                 value = editFlatNo,
                                 onValueChange = { editFlatNo = it },
-                                label = { Text("Parent Flat Number") },
+                                label = { Text("Parent Flat Number * (Compulsory)") },
+                                modifier = Modifier.fillMaxWidth().moveFocusOnEnter(localFocusManager, androidx.compose.ui.focus.FocusDirection.Next),
+                                shape = RoundedCornerShape(10.dp),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
+                                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = { localFocusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Next) })
+                            )
+                            androidx.compose.material3.OutlinedTextField(
+                                value = editBirthDate,
+                                onValueChange = { editBirthDate = it },
+                                label = { Text("Date of Birth * (DD-MM-YYYY) (Compulsory)") },
+                                placeholder = { Text("e.g. 15-08-2012") },
                                 modifier = Modifier.fillMaxWidth().moveFocusOnEnter(localFocusManager, androidx.compose.ui.focus.FocusDirection.Next),
                                 shape = RoundedCornerShape(10.dp),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
@@ -4553,7 +5188,7 @@ fun StudentDetailOverlay(
                             androidx.compose.material3.OutlinedTextField(
                                 value = editClass,
                                 onValueChange = { editClass = it },
-                                label = { Text("Standard Class") },
+                                label = { Text("Standard Class * (Compulsory)") },
                                 modifier = Modifier.fillMaxWidth().moveFocusOnEnter(localFocusManager, androidx.compose.ui.focus.FocusDirection.Next),
                                 shape = RoundedCornerShape(10.dp),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
@@ -4562,7 +5197,7 @@ fun StudentDetailOverlay(
                             androidx.compose.material3.OutlinedTextField(
                                 value = editSchool,
                                 onValueChange = { editSchool = it },
-                                label = { Text("School Name") },
+                                label = { Text("School Name * (Compulsory)") },
                                 modifier = Modifier.fillMaxWidth().moveFocusOnEnter(localFocusManager, androidx.compose.ui.focus.FocusDirection.Next),
                                 shape = RoundedCornerShape(10.dp),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
@@ -4571,7 +5206,7 @@ fun StudentDetailOverlay(
                             androidx.compose.material3.OutlinedTextField(
                                 value = editBoard,
                                 onValueChange = { editBoard = it },
-                                label = { Text("Secondary Board") },
+                                label = { Text("Secondary Board * (Compulsory)") },
                                 modifier = Modifier.fillMaxWidth().moveFocusOnEnter(localFocusManager, androidx.compose.ui.focus.FocusDirection.Next),
                                 shape = RoundedCornerShape(10.dp),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
@@ -4593,9 +5228,47 @@ fun StudentDetailOverlay(
                             ) {
                                 Button(
                                     onClick = {
+                                        if (editName.trim().isEmpty()) {
+                                            Toast.makeText(context, "Student Full Name is compulsory", Toast.LENGTH_SHORT).show()
+                                            return@Button
+                                        }
+                                        if (editParentName.trim().isEmpty()) {
+                                            Toast.makeText(context, "Parent Full Name is compulsory", Toast.LENGTH_SHORT).show()
+                                            return@Button
+                                        }
+                                        if (editPhone.trim().isEmpty() || editPhone.trim().length < 10) {
+                                            Toast.makeText(context, "Valid 10-digit Parent Phone is compulsory", Toast.LENGTH_SHORT).show()
+                                            return@Button
+                                        }
+                                        if (editFlatNo.trim().isEmpty()) {
+                                            Toast.makeText(context, "Parent Flat Number is compulsory", Toast.LENGTH_SHORT).show()
+                                            return@Button
+                                        }
+                                        if (editBirthDate.trim().isEmpty()) {
+                                            Toast.makeText(context, "Student Date of Birth is compulsory", Toast.LENGTH_SHORT).show()
+                                            return@Button
+                                        }
+                                        if (editClass.trim().isEmpty()) {
+                                            Toast.makeText(context, "Standard Class is compulsory", Toast.LENGTH_SHORT).show()
+                                            return@Button
+                                        }
+                                        if (editSchool.trim().isEmpty()) {
+                                            Toast.makeText(context, "School Name is compulsory", Toast.LENGTH_SHORT).show()
+                                            return@Button
+                                        }
+                                        if (editBoard.trim().isEmpty()) {
+                                            Toast.makeText(context, "Secondary Board is compulsory", Toast.LENGTH_SHORT).show()
+                                            return@Button
+                                        }
+                                        if (editSubjectsList.isEmpty()) {
+                                            Toast.makeText(context, "At least one enrolled subject is compulsory", Toast.LENGTH_SHORT).show()
+                                            return@Button
+                                        }
+
                                         viewModel.addOrUpdateStudentDetails(
                                             slNo = student.slNo,
                                             name = editName.trim(),
+                                            parentName = editParentName.trim(),
                                             phone = editPhone.trim(),
                                             school = editSchool.trim(),
                                             board = editBoard.trim(),
@@ -4606,7 +5279,8 @@ fun StudentDetailOverlay(
                                             tuitionFee = student.tuitionFee,
                                             isPaid = student.isFeesPaid,
                                             demoFee = student.demoFee,
-                                            parentFlatNo = editFlatNo.trim()
+                                            parentFlatNo = editFlatNo.trim(),
+                                            birthDate = editBirthDate.trim()
                                         )
                                         Toast.makeText(context, "Student profile parameters saved on Cloud!", Toast.LENGTH_SHORT).show()
                                         activeSubViewTab = 0
@@ -4650,8 +5324,10 @@ fun AddStudentDialog(
 ) {
     var slNo by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
+    var parentName by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
     var parentFlatNo by remember { mutableStateOf("") }
+    var birthDate by remember { mutableStateOf("") }
     var standard by remember { mutableStateOf("") }
     var school by remember { mutableStateOf("") }
     var board by remember { mutableStateOf("CBSE") }
@@ -4668,12 +5344,12 @@ fun AddStudentDialog(
         title = { Text("Enroll New Student", fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
-                Text("Set up standard authorization details. Sl registers number handles login tracking.")
+                Text("Set up standard authorization details. All fields are compulsory.")
 
                 androidx.compose.material3.OutlinedTextField(
                     value = slNo,
                     onValueChange = { slNo = it },
-                    placeholder = { Text("SL Register No (e.g. 103)") },
+                    placeholder = { Text("SL Register No * (e.g. 103)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
                     keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = { focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Next) }),
                     singleLine = true,
@@ -4683,7 +5359,7 @@ fun AddStudentDialog(
                 androidx.compose.material3.OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    placeholder = { Text("Student Full Name") },
+                    placeholder = { Text("Student Full Name *") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
                     keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = { focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Next) }),
                     singleLine = true,
@@ -4691,9 +5367,19 @@ fun AddStudentDialog(
                     shape = RoundedCornerShape(10.dp)
                 )
                 androidx.compose.material3.OutlinedTextField(
+                    value = parentName,
+                    onValueChange = { parentName = it },
+                    placeholder = { Text("Parent Full Name *") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = { focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Next) }),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("add_stu_parent_name").moveFocusOnEnter(focusManager, androidx.compose.ui.focus.FocusDirection.Next),
+                    shape = RoundedCornerShape(10.dp)
+                )
+                androidx.compose.material3.OutlinedTextField(
                     value = phone,
                     onValueChange = { phone = it },
-                    placeholder = { Text("Parent Mobile Phone") },
+                    placeholder = { Text("Parent Mobile Phone *") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
                     keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = { focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Next) }),
                     singleLine = true,
@@ -4703,7 +5389,7 @@ fun AddStudentDialog(
                 androidx.compose.material3.OutlinedTextField(
                     value = parentFlatNo,
                     onValueChange = { parentFlatNo = it },
-                    placeholder = { Text("Parent Flat Number") },
+                    placeholder = { Text("Parent Flat Number *") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
                     keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = { focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Next) }),
                     singleLine = true,
@@ -4711,9 +5397,19 @@ fun AddStudentDialog(
                     shape = RoundedCornerShape(10.dp)
                 )
                 androidx.compose.material3.OutlinedTextField(
+                    value = birthDate,
+                    onValueChange = { birthDate = it },
+                    placeholder = { Text("Date of Birth * (DD-MM-YYYY)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = { focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Next) }),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("add_stu_dob").moveFocusOnEnter(focusManager, androidx.compose.ui.focus.FocusDirection.Next),
+                    shape = RoundedCornerShape(10.dp)
+                )
+                androidx.compose.material3.OutlinedTextField(
                     value = standard,
                     onValueChange = { standard = it },
-                    placeholder = { Text("Standard Grade Class") },
+                    placeholder = { Text("Standard Grade Class *") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
                     keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = { focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Next) }),
                     singleLine = true,
@@ -4723,7 +5419,7 @@ fun AddStudentDialog(
                 androidx.compose.material3.OutlinedTextField(
                     value = school,
                     onValueChange = { school = it },
-                    placeholder = { Text("School Name") },
+                    placeholder = { Text("School Name *") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
                     keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = { focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Next) }),
                     singleLine = true,
@@ -4733,7 +5429,7 @@ fun AddStudentDialog(
                 androidx.compose.material3.OutlinedTextField(
                     value = board,
                     onValueChange = { board = it },
-                    placeholder = { Text("Board (e.g. CBSE / ICSE)") },
+                    placeholder = { Text("Board * (e.g. CBSE / ICSE)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
                     keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = { focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Next) }),
                     singleLine = true,
@@ -4743,7 +5439,7 @@ fun AddStudentDialog(
                 androidx.compose.material3.OutlinedTextField(
                     value = tuitionFeeText,
                     onValueChange = { tuitionFeeText = it },
-                    placeholder = { Text("Tuition Fee (₹)") },
+                    placeholder = { Text("Tuition Fee * (₹)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
                     keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = { focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Next) }),
                     singleLine = true,
@@ -4773,7 +5469,7 @@ fun AddStudentDialog(
                 )
 
                 Spacer(modifier = Modifier.height(6.dp))
-                Text("Select Enrolled Subjects:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall, color = Color.Gray)
+                Text("Select Enrolled Subjects *:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall, color = Color.Gray)
                 val combinedSubjects = (com.amarmohan.domain.model.ALLOWED_SUBJECTS + customSubjectsList).distinct()
                 combinedSubjects.chunked(3).forEach { rowSubjects ->
                     Row(
@@ -4815,11 +5511,52 @@ fun AddStudentDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val passFee = tuitionFeeText.toDoubleOrNull() ?: 0.0
-                    if (slNo.trim().isEmpty() || name.trim().isEmpty() || phone.trim().isEmpty()) {
-                        Toast.makeText(context, "SL No, Name, and Parent Phone are required", Toast.LENGTH_SHORT).show()
+                    if (slNo.trim().isEmpty()) {
+                        Toast.makeText(context, "SL Register No is compulsory", Toast.LENGTH_SHORT).show()
                         return@Button
                     }
+                    if (name.trim().isEmpty()) {
+                        Toast.makeText(context, "Student Full Name is compulsory", Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+                    if (parentName.trim().isEmpty()) {
+                        Toast.makeText(context, "Parent Full Name is compulsory", Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+                    if (phone.trim().isEmpty() || phone.trim().length < 10) {
+                        Toast.makeText(context, "Valid 10-digit Parent Phone is compulsory", Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+                    if (parentFlatNo.trim().isEmpty()) {
+                        Toast.makeText(context, "Parent Flat Number is compulsory", Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+                    if (birthDate.trim().isEmpty()) {
+                        Toast.makeText(context, "Student Date of Birth is compulsory", Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+                    if (standard.trim().isEmpty()) {
+                        Toast.makeText(context, "Standard Class is compulsory", Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+                    if (school.trim().isEmpty()) {
+                        Toast.makeText(context, "School Name is compulsory", Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+                    if (board.trim().isEmpty()) {
+                        Toast.makeText(context, "Secondary Board is compulsory", Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+                    val passFee = tuitionFeeText.toDoubleOrNull()
+                    if (passFee == null || tuitionFeeText.trim().isEmpty()) {
+                        Toast.makeText(context, "Tuition Fee is compulsory", Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+                    if (selectedSubjects.isEmpty()) {
+                        Toast.makeText(context, "At least one enrolled subject is compulsory", Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+
                     val initialSubjectsList = selectedSubjects.map { subjName ->
                         com.amarmohan.domain.model.SubjectMark(
                             subjectName = subjName,
@@ -4831,7 +5568,10 @@ fun AddStudentDialog(
                     val newStu = com.amarmohan.domain.model.Student(
                         slNo = slNo.trim(),
                         name = name.trim(),
+                        parentName = parentName.trim(),
                         parentPhone = phone.trim(),
+                        parentFlatNo = parentFlatNo.trim(),
+                        birthDate = birthDate.trim(),
                         school = school.trim(),
                         board = board.trim(),
                         standard = standard.trim(),
@@ -4839,12 +5579,12 @@ fun AddStudentDialog(
                         isFeesPaid = false,
                         dueAmount = passFee,
                         subjectsJson = com.amarmohan.domain.model.JsonUtils.listToJson(initialSubjectsList, com.amarmohan.domain.model.SubjectMark::class.java),
-                        parentFlatNo = parentFlatNo.trim(),
                         syllabus = ""
                     )
                     viewModel.addOrUpdateStudentDetails(
                         slNo = slNo.trim(),
                         name = name.trim(),
+                        parentName = parentName.trim(),
                         phone = phone.trim(),
                         school = school.trim(),
                         board = board.trim(),
@@ -4852,10 +5592,12 @@ fun AddStudentDialog(
                         tuitionFee = passFee,
                         isPaid = false,
                         subjects = initialSubjectsList,
-                        parentFlatNo = parentFlatNo.trim()
+                        parentFlatNo = parentFlatNo.trim(),
+                        birthDate = birthDate.trim()
                     )
+                    viewModel.sendWelcomeSmsToParent(context, phone.trim(), name.trim(), parentName.trim())
                     onEnrollSuccess(newStu)
-                    Toast.makeText(context, "Registration Saved with Enrolled Subjects!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Student Enrolled & Welcome SMS sent to parent!", Toast.LENGTH_SHORT).show()
                 },
                 modifier = Modifier.testTag("confirm_add_stu_btn")
             ) {
@@ -4877,8 +5619,10 @@ fun TutorEnrollStudentScreen(
 ) {
     var slNo by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
+    var parentName by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
     var parentFlatNo by remember { mutableStateOf("") }
+    var birthDate by remember { mutableStateOf("") }
     var standard by remember { mutableStateOf("") }
     var school by remember { mutableStateOf("") }
     var board by remember { mutableStateOf("CBSE") }
@@ -4891,8 +5635,10 @@ fun TutorEnrollStudentScreen(
 
     val slNoFocusRequester = remember { FocusRequester() }
     val nameFocusRequester = remember { FocusRequester() }
+    val parentNameFocusRequester = remember { FocusRequester() }
     val phoneFocusRequester = remember { FocusRequester() }
     val parentFlatNoFocusRequester = remember { FocusRequester() }
+    val birthDateFocusRequester = remember { FocusRequester() }
     val standardFocusRequester = remember { FocusRequester() }
     val schoolFocusRequester = remember { FocusRequester() }
     val boardFocusRequester = remember { FocusRequester() }
@@ -4939,19 +5685,21 @@ fun TutorEnrollStudentScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         // "Next Field" Button
-                        if (activeFieldIndex < 8) {
+                        if (activeFieldIndex < 10) {
                             Button(
                                 onClick = {
                                     val nextIndex = activeFieldIndex + 1
                                     when (nextIndex) {
                                         1 -> nameFocusRequester.requestFocus()
-                                        2 -> phoneFocusRequester.requestFocus()
-                                        3 -> parentFlatNoFocusRequester.requestFocus()
-                                        4 -> standardFocusRequester.requestFocus()
-                                        5 -> schoolFocusRequester.requestFocus()
-                                        6 -> boardFocusRequester.requestFocus()
-                                        7 -> tuitionFeeTextFocusRequester.requestFocus()
-                                        8 -> customSubjectFocusRequester.requestFocus()
+                                        2 -> parentNameFocusRequester.requestFocus()
+                                        3 -> phoneFocusRequester.requestFocus()
+                                        4 -> parentFlatNoFocusRequester.requestFocus()
+                                        5 -> birthDateFocusRequester.requestFocus()
+                                        6 -> standardFocusRequester.requestFocus()
+                                        7 -> schoolFocusRequester.requestFocus()
+                                        8 -> boardFocusRequester.requestFocus()
+                                        9 -> tuitionFeeTextFocusRequester.requestFocus()
+                                        10 -> customSubjectFocusRequester.requestFocus()
                                     }
                                     activeFieldIndex = nextIndex
                                     coroutineScope.launch {
@@ -4974,11 +5722,52 @@ fun TutorEnrollStudentScreen(
                         // "Enroll Student" Button
                         Button(
                             onClick = {
-                                val passFee = tuitionFeeText.toDoubleOrNull() ?: 0.0
-                                if (slNo.trim().isEmpty() || name.trim().isEmpty() || phone.trim().isEmpty()) {
-                                    Toast.makeText(context, "SL No, Name, and Parent Phone are required", Toast.LENGTH_SHORT).show()
+                                if (slNo.trim().isEmpty()) {
+                                    Toast.makeText(context, "SL Register No is compulsory", Toast.LENGTH_SHORT).show()
                                     return@Button
                                 }
+                                if (name.trim().isEmpty()) {
+                                    Toast.makeText(context, "Student Full Name is compulsory", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                if (parentName.trim().isEmpty()) {
+                                    Toast.makeText(context, "Parent Full Name is compulsory", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                if (phone.trim().isEmpty() || phone.trim().length < 10) {
+                                    Toast.makeText(context, "Valid 10-digit Parent Phone is compulsory", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                if (parentFlatNo.trim().isEmpty()) {
+                                    Toast.makeText(context, "Parent Flat Number is compulsory", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                if (birthDate.trim().isEmpty()) {
+                                    Toast.makeText(context, "Student Date of Birth is compulsory", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                if (standard.trim().isEmpty()) {
+                                    Toast.makeText(context, "Standard Class is compulsory", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                if (school.trim().isEmpty()) {
+                                    Toast.makeText(context, "School Name is compulsory", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                if (board.trim().isEmpty()) {
+                                    Toast.makeText(context, "Secondary Board is compulsory", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                val passFee = tuitionFeeText.toDoubleOrNull()
+                                if (passFee == null || tuitionFeeText.trim().isEmpty()) {
+                                    Toast.makeText(context, "Tuition Fee is compulsory", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                if (selectedSubjects.isEmpty()) {
+                                    Toast.makeText(context, "At least one enrolled subject is compulsory", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+
                                 val initialSubjectsList = selectedSubjects.map { subjName ->
                                     com.amarmohan.domain.model.SubjectMark(
                                         subjectName = subjName,
@@ -4990,7 +5779,10 @@ fun TutorEnrollStudentScreen(
                                 val newStu = com.amarmohan.domain.model.Student(
                                     slNo = slNo.trim(),
                                     name = name.trim(),
+                                    parentName = parentName.trim(),
                                     parentPhone = phone.trim(),
+                                    parentFlatNo = parentFlatNo.trim(),
+                                    birthDate = birthDate.trim(),
                                     school = school.trim(),
                                     board = board.trim(),
                                     standard = standard.trim(),
@@ -4998,12 +5790,12 @@ fun TutorEnrollStudentScreen(
                                     isFeesPaid = false,
                                     dueAmount = passFee,
                                     subjectsJson = com.amarmohan.domain.model.JsonUtils.listToJson(initialSubjectsList, com.amarmohan.domain.model.SubjectMark::class.java),
-                                    parentFlatNo = parentFlatNo.trim(),
                                     syllabus = ""
                                 )
                                 viewModel.addOrUpdateStudentDetails(
                                     slNo = slNo.trim(),
                                     name = name.trim(),
+                                    parentName = parentName.trim(),
                                     phone = phone.trim(),
                                     school = school.trim(),
                                     board = board.trim(),
@@ -5011,10 +5803,12 @@ fun TutorEnrollStudentScreen(
                                     tuitionFee = passFee,
                                     isPaid = false,
                                     subjects = initialSubjectsList,
-                                    parentFlatNo = parentFlatNo.trim()
+                                    parentFlatNo = parentFlatNo.trim(),
+                                    birthDate = birthDate.trim()
                                 )
+                                viewModel.sendWelcomeSmsToParent(context, phone.trim(), name.trim(), parentName.trim())
                                 onEnrollSuccess(newStu)
-                                Toast.makeText(context, "Registration Saved with Enrolled Subjects!", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Student Enrolled & Welcome SMS sent to parent!", Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier
                                 .weight(1f)
@@ -5050,7 +5844,7 @@ fun TutorEnrollStudentScreen(
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Text(
-                        text = "Set up student authorization details. SL registers number handles login tracking.",
+                        text = "Set up student authorization details. All fields are compulsory.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.Gray
                     )
@@ -5059,7 +5853,7 @@ fun TutorEnrollStudentScreen(
                     androidx.compose.material3.OutlinedTextField(
                         value = slNo,
                         onValueChange = { slNo = it },
-                        label = { Text("SL Register No (e.g. 103)") },
+                        label = { Text("SL Register No * (e.g. 103)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
                         keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = {
                             nameFocusRequester.requestFocus()
@@ -5079,10 +5873,10 @@ fun TutorEnrollStudentScreen(
                     androidx.compose.material3.OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
-                        label = { Text("Student Full Name") },
+                        label = { Text("Student Full Name *") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
                         keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = {
-                            phoneFocusRequester.requestFocus()
+                            parentNameFocusRequester.requestFocus()
                             activeFieldIndex = 2
                             coroutineScope.launch { scrollHelper(2) }
                         }),
@@ -5095,123 +5889,164 @@ fun TutorEnrollStudentScreen(
                         shape = RoundedCornerShape(10.dp)
                     )
 
-                    // 3. Parent Phone
+                    // 3. Parent Full Name
                     androidx.compose.material3.OutlinedTextField(
-                        value = phone,
-                        onValueChange = { phone = it },
-                        label = { Text("Parent Mobile Phone") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
+                        value = parentName,
+                        onValueChange = { parentName = it },
+                        label = { Text("Parent Full Name *") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
                         keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = {
-                            parentFlatNoFocusRequester.requestFocus()
+                            phoneFocusRequester.requestFocus()
                             activeFieldIndex = 3
                             coroutineScope.launch { scrollHelper(3) }
                         }),
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .focusRequester(phoneFocusRequester)
+                            .focusRequester(parentNameFocusRequester)
                             .onFocusChanged { if (it.isFocused) { activeFieldIndex = 2; coroutineScope.launch { scrollHelper(2) } } }
-                            .testTag("add_stu_phone"),
+                            .testTag("add_stu_parent_name"),
                         shape = RoundedCornerShape(10.dp)
                     )
 
-                    // 4. Parent Flat No
+                    // 4. Parent Phone
                     androidx.compose.material3.OutlinedTextField(
-                        value = parentFlatNo,
-                        onValueChange = { parentFlatNo = it },
-                        label = { Text("Parent Flat Number") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
+                        value = phone,
+                        onValueChange = { phone = it },
+                        label = { Text("Parent Mobile Phone *") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
                         keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = {
-                            standardFocusRequester.requestFocus()
+                            parentFlatNoFocusRequester.requestFocus()
                             activeFieldIndex = 4
                             coroutineScope.launch { scrollHelper(4) }
                         }),
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .focusRequester(parentFlatNoFocusRequester)
+                            .focusRequester(phoneFocusRequester)
                             .onFocusChanged { if (it.isFocused) { activeFieldIndex = 3; coroutineScope.launch { scrollHelper(3) } } }
-                            .testTag("add_stu_flat"),
+                            .testTag("add_stu_phone"),
                         shape = RoundedCornerShape(10.dp)
                     )
 
-                    // 5. Standard Grade Class
+                    // 5. Parent Flat No
                     androidx.compose.material3.OutlinedTextField(
-                        value = standard,
-                        onValueChange = { standard = it },
-                        label = { Text("Standard Grade Class") },
+                        value = parentFlatNo,
+                        onValueChange = { parentFlatNo = it },
+                        label = { Text("Parent Flat Number *") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
                         keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = {
-                            schoolFocusRequester.requestFocus()
+                            birthDateFocusRequester.requestFocus()
                             activeFieldIndex = 5
                             coroutineScope.launch { scrollHelper(5) }
                         }),
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .focusRequester(standardFocusRequester)
-                            .onFocusChanged { if (it.isFocused) { activeFieldIndex = 4; coroutineScope.launch { scrollHelper(4) } } },
+                            .focusRequester(parentFlatNoFocusRequester)
+                            .onFocusChanged { if (it.isFocused) { activeFieldIndex = 4; coroutineScope.launch { scrollHelper(4) } } }
+                            .testTag("add_stu_flat"),
                         shape = RoundedCornerShape(10.dp)
                     )
 
-                    // 6. School Name
+                    // 6. Birth Date
                     androidx.compose.material3.OutlinedTextField(
-                        value = school,
-                        onValueChange = { school = it },
-                        label = { Text("School Name") },
+                        value = birthDate,
+                        onValueChange = { birthDate = it },
+                        label = { Text("Date of Birth * (DD-MM-YYYY)") },
+                        placeholder = { Text("e.g. 15-08-2012") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
                         keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = {
-                            boardFocusRequester.requestFocus()
+                            standardFocusRequester.requestFocus()
                             activeFieldIndex = 6
                             coroutineScope.launch { scrollHelper(6) }
                         }),
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .focusRequester(schoolFocusRequester)
-                            .onFocusChanged { if (it.isFocused) { activeFieldIndex = 5; coroutineScope.launch { scrollHelper(5) } } },
+                            .focusRequester(birthDateFocusRequester)
+                            .onFocusChanged { if (it.isFocused) { activeFieldIndex = 5; coroutineScope.launch { scrollHelper(5) } } }
+                            .testTag("add_stu_dob"),
                         shape = RoundedCornerShape(10.dp)
                     )
 
-                    // 7. Board (CBSE / ICSE)
+                    // 7. Standard Grade Class
                     androidx.compose.material3.OutlinedTextField(
-                        value = board,
-                        onValueChange = { board = it },
-                        label = { Text("Board (e.g. CBSE / ICSE)") },
+                        value = standard,
+                        onValueChange = { standard = it },
+                        label = { Text("Standard Grade Class *") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
                         keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = {
-                            tuitionFeeTextFocusRequester.requestFocus()
+                            schoolFocusRequester.requestFocus()
                             activeFieldIndex = 7
                             coroutineScope.launch { scrollHelper(7) }
                         }),
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .focusRequester(boardFocusRequester)
+                            .focusRequester(standardFocusRequester)
                             .onFocusChanged { if (it.isFocused) { activeFieldIndex = 6; coroutineScope.launch { scrollHelper(6) } } },
                         shape = RoundedCornerShape(10.dp)
                     )
 
-                    // 8. Tuition Fee (₹)
+                    // 8. School Name
                     androidx.compose.material3.OutlinedTextField(
-                        value = tuitionFeeText,
-                        onValueChange = { tuitionFeeText = it },
-                        label = { Text("Tuition Fee (₹)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
+                        value = school,
+                        onValueChange = { school = it },
+                        label = { Text("School Name *") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
                         keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = {
-                            customSubjectFocusRequester.requestFocus()
+                            boardFocusRequester.requestFocus()
                             activeFieldIndex = 8
                             coroutineScope.launch { scrollHelper(8) }
                         }),
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .focusRequester(tuitionFeeTextFocusRequester)
+                            .focusRequester(schoolFocusRequester)
                             .onFocusChanged { if (it.isFocused) { activeFieldIndex = 7; coroutineScope.launch { scrollHelper(7) } } },
                         shape = RoundedCornerShape(10.dp)
                     )
 
-                    // 9. Custom Subject Addition
+                    // 9. Board (CBSE / ICSE)
+                    androidx.compose.material3.OutlinedTextField(
+                        value = board,
+                        onValueChange = { board = it },
+                        label = { Text("Board * (e.g. CBSE / ICSE)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = {
+                            tuitionFeeTextFocusRequester.requestFocus()
+                            activeFieldIndex = 9
+                            coroutineScope.launch { scrollHelper(9) }
+                        }),
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(boardFocusRequester)
+                            .onFocusChanged { if (it.isFocused) { activeFieldIndex = 8; coroutineScope.launch { scrollHelper(8) } } },
+                        shape = RoundedCornerShape(10.dp)
+                    )
+
+                    // 10. Tuition Fee (₹)
+                    androidx.compose.material3.OutlinedTextField(
+                        value = tuitionFeeText,
+                        onValueChange = { tuitionFeeText = it },
+                        label = { Text("Tuition Fee * (₹)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = androidx.compose.ui.text.input.ImeAction.Next),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onNext = {
+                            customSubjectFocusRequester.requestFocus()
+                            activeFieldIndex = 10
+                            coroutineScope.launch { scrollHelper(10) }
+                        }),
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(tuitionFeeTextFocusRequester)
+                            .onFocusChanged { if (it.isFocused) { activeFieldIndex = 9; coroutineScope.launch { scrollHelper(9) } } },
+                        shape = RoundedCornerShape(10.dp)
+                    )
+
+                    // 11. Custom Subject Addition
                     androidx.compose.material3.OutlinedTextField(
                         value = newSubjectInput,
                         onValueChange = { newSubjectInput = it },
@@ -5232,12 +6067,12 @@ fun TutorEnrollStudentScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .focusRequester(customSubjectFocusRequester)
-                            .onFocusChanged { if (it.isFocused) { activeFieldIndex = 8; coroutineScope.launch { scrollHelper(8) } } },
+                            .onFocusChanged { if (it.isFocused) { activeFieldIndex = 10; coroutineScope.launch { scrollHelper(10) } } },
                         shape = RoundedCornerShape(10.dp)
                     )
 
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text("Select Enrolled Subjects:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall, color = Color.Gray)
+                    Text("Select Enrolled Subjects *:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall, color = Color.Gray)
                     val combinedSubjects = (com.amarmohan.domain.model.ALLOWED_SUBJECTS + customSubjectsList).distinct()
                     combinedSubjects.chunked(3).forEach { rowSubjects ->
                         Row(

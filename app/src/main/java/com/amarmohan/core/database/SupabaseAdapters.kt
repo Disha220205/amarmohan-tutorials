@@ -31,6 +31,7 @@ class StudentNullSafeAdapter : JsonAdapter<Student>() {
         var school = ""
         var board = ""
         var studentEmail = ""
+        var birthDate = ""
         var subjectsJson = "[]"
         var attendanceJson = "{}"
         var testPapersJson = "[]"
@@ -59,6 +60,7 @@ class StudentNullSafeAdapter : JsonAdapter<Student>() {
                 "school" -> school = reader.nextString()
                 "board" -> board = reader.nextString()
                 "student_email" -> studentEmail = reader.nextString()
+                "birth_date" -> birthDate = reader.nextString()
                 "subjects_json" -> {
                     if (reader.peek() == JsonReader.Token.STRING) {
                         subjectsJson = reader.nextString()
@@ -146,6 +148,7 @@ class StudentNullSafeAdapter : JsonAdapter<Student>() {
             school = school,
             board = board,
             studentEmail = studentEmail,
+            birthDate = birthDate,
             subjectsJson = subjectsJson.ifEmpty { "[]" },
             attendanceJson = attendanceJson.ifEmpty { "{}" },
             testPapersJson = testPapersJson.ifEmpty { "[]" },
@@ -175,6 +178,7 @@ class StudentNullSafeAdapter : JsonAdapter<Student>() {
         writer.name("school").value(value.school)
         writer.name("board").value(value.board)
         writer.name("student_email").value(value.studentEmail)
+        writer.name("birth_date").value(value.birthDate)
         writer.name("subjects_json").value(value.subjectsJson)
         writer.name("attendance_json").value(value.attendanceJson)
         writer.name("test_papers_json").value(value.testPapersJson)

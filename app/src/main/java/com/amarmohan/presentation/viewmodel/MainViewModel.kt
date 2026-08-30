@@ -47,6 +47,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
             parentFlatNo = "101",
             parentEmail = "test@example.com",
             studentEmail = "test@example.com",
+            birthDate = "2010-08-29",
             school = "AmarMohan Learning Centre",
             board = "CBSE",
             standard = "Class 10",
@@ -293,6 +294,8 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                         logOut()
                     }
                 }
+                // Automatically dispatch birthday greetings on birthdate to parents without asking the tutor
+                checkAndSendAutomaticBirthdayGreetings(context)
             }
         }
 
@@ -760,22 +763,281 @@ class MainViewModel(private val repository: StudentRepository, private val conte
         val cleanPhone = phone.trim().filter { it.isDigit() }
         if (cleanPhone.isEmpty()) return
 
-        try {
-            val smsManager: android.telephony.SmsManager = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                context.getSystemService(android.telephony.SmsManager::class.java)
-            } else {
-                android.telephony.SmsManager.getDefault()
-            }
-            val message = if (cleanPhone == "9986736360") {
-                "Your Shree Amarmohan Tutor verification OTP is: $otp"
-            } else {
-                "Your Shree Amarmohan Parent verification OTP is: $otp. (Sent from Tutor: 9986736360)"
-            }
-            smsManager.sendTextMessage(cleanPhone, null, message, null, null)
-            android.util.Log.d("SMS_OTP", "SMS OTP Sent successfully to $cleanPhone: $otp")
-        } catch (e: Exception) {
-            android.util.Log.e("SMS_OTP", "Failed to send SMS programmatically", e)
+        val message = if (cleanPhone == "9986736360") {
+            "Your Shree Amarmohan Tutor verification OTP is: $otp"
+        } else {
+            "Your Shree Amarmohan Parent verification OTP is: $otp. (Sent from Tutor: 9986736360)"
         }
+
+        val hasSmsPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.SEND_SMS
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        if (hasSmsPermission) {
+            try {
+                val smsManager: android.telephony.SmsManager = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                    context.getSystemService(android.telephony.SmsManager::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    android.telephony.SmsManager.getDefault()
+                }
+                val parts = smsManager.divideMessage(message)
+                if (parts.size > 1) {
+                    smsManager.sendMultipartTextMessage(cleanPhone, null, parts, null, null)
+                } else {
+                    smsManager.sendTextMessage(cleanPhone, null, message, null, null)
+                }
+                android.util.Log.d("SMS_OTP", "SMS OTP Sent successfully to $cleanPhone: $otp")
+                return
+            } catch (e: Exception) {
+                android.util.Log.e("SMS_OTP", "Failed to send SMS programmatically", e)
+            }
+        }
+
+        // Fallback or open SMS app if direct send permission not granted or failed
+        try {
+            val smsIntent = android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
+                data = android.net.Uri.parse("smsto:$cleanPhone")
+                putExtra("sms_body", message)
+                flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(smsIntent)
+        } catch (e: Exception) {
+            android.util.Log.e("SMS_OTP", "Failed to launch SMS app intent", e)
+        }
+    }
+
+    fun sendDirectSms(context: android.content.Context, phone: String, message: String, isUserTriggered: Boolean = true): Boolean {
+        val cleanPhone = phone.trim().filter { it.isDigit() }
+        if (cleanPhone.isEmpty()) return false
+
+        val hasSmsPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.SEND_SMS
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        if (hasSmsPermission) {
+            try {
+                val smsManager: android.telephony.SmsManager = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                    context.getSystemService(android.telephony.SmsManager::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    android.telephony.SmsManager.getDefault()
+                }
+                val parts = smsManager.divideMessage(message)
+                if (parts.size > 1) {
+                    smsManager.sendMultipartTextMessage(cleanPhone, null, parts, null, null)
+                } else {
+                    smsManager.sendTextMessage(cleanPhone, null, message, null, null)
+                }
+                android.util.Log.d("SMS_DISPATCH", "SMS sent successfully to $cleanPhone: $message")
+                return true
+            } catch (e: Exception) {
+                android.util.Log.e("SMS_DISPATCH", "Direct SMS failed: ${e.message}", e)
+            }
+        }
+
+        // Open SMS intent as graceful fallback if user-triggered
+        if (isUserTriggered) {
+            try {
+                val smsIntent = android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
+                    data = android.net.Uri.parse("smsto:$cleanPhone")
+                    putExtra("sms_body", message)
+                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(smsIntent)
+                return true
+            } catch (e: Exception) {
+                android.util.Log.e("SMS_DISPATCH", "SMS Intent failed: ${e.message}", e)
+            }
+        }
+        return false
+    }
+
+    /**
+     * Sent when a test paper is uploaded by the tutor.
+     * Message: "test paper of a $subject is uploaded check it out on the app"
+     */
+    fun sendTestPaperUploadedSms(context: android.content.Context, parentPhone: String, subject: String) {
+        val message = "Test paper of a $subject is uploaded check it out on the app"
+        sendDirectSms(context, parentPhone, message)
+        android.widget.Toast.makeText(context, "SMS sent to parent ($parentPhone): \"$message\"", android.widget.Toast.LENGTH_LONG).show()
+    }
+
+    /**
+     * Sent when a test paper is verified and co-signed by tutor.
+     */
+    fun sendTestPaperVerifiedSms(
+        context: android.content.Context,
+        parentPhone: String,
+        studentName: String,
+        subject: String,
+        marksObtained: Double?,
+        totalMarks: Double?
+    ) {
+        val marksStr = if (marksObtained != null && totalMarks != null) {
+            val m = if (marksObtained % 1.0 == 0.0) marksObtained.toInt().toString() else marksObtained.toString()
+            val tm = if (totalMarks % 1.0 == 0.0) totalMarks.toInt().toString() else totalMarks.toString()
+            " (Marks: $m/$tm)"
+        } else ""
+        val message = "Test paper of a $subject for $studentName is verified and evaluated by the tutor$marksStr. Check it out on the app"
+        sendDirectSms(context, parentPhone, message)
+        android.widget.Toast.makeText(context, "Verification SMS sent to parent ($parentPhone)", android.widget.Toast.LENGTH_LONG).show()
+    }
+
+    /**
+     * Sent when parent submits a query regarding a test paper to the tutor.
+     * Automated SMS to Tutor Phone: 9986736360
+     */
+    fun sendTestPaperQuerySms(
+        context: android.content.Context,
+        tutorPhone: String = "9986736360",
+        studentName: String,
+        subject: String,
+        queryText: String
+    ) {
+        val message = "Query from Parent of $studentName regarding $subject test paper: $queryText"
+        sendDirectSms(context, tutorPhone, message)
+        android.widget.Toast.makeText(context, "Query sent to Tutor ($tutorPhone) via SMS!", android.widget.Toast.LENGTH_LONG).show()
+    }
+
+    /**
+     * Sent when tutor sends an SMS response regarding a test paper or query to the parent.
+     */
+    fun sendTestPaperQueryReplySms(
+        context: android.content.Context,
+        parentPhone: String,
+        studentName: String,
+        subject: String,
+        replyText: String
+    ) {
+        val message = "Tutor response on $subject test paper for $studentName: $replyText. - Shree Amarmohan Tuitions"
+        sendDirectSms(context, parentPhone, message)
+        android.widget.Toast.makeText(context, "SMS sent to parent ($parentPhone)", android.widget.Toast.LENGTH_LONG).show()
+    }
+
+    /**
+     * Sent when a student is marked absent by the tutor.
+     * Message: "student was absent on $date"
+     */
+    fun sendAbsentNotificationSms(context: android.content.Context, parentPhone: String, date: String) {
+        val message = " Student was absent on $date. Please make sure to send the student regularly for better progress"
+        sendDirectSms(context, parentPhone, message)
+        android.widget.Toast.makeText(context, "SMS sent to parent ($parentPhone): \"$message\"", android.widget.Toast.LENGTH_LONG).show()
+    }
+
+    /**
+     * Sent on student's birthdate.
+     * Message: " happy Birthday dear $name, wish you a very successfull and prosporous life ahead , stay healthy and happy , regards Shree amarmohan tutions ."
+     */
+    fun sendBirthdayGreetingSms(context: android.content.Context, phone: String, studentName: String) {
+        val message = " 🎉 Happy Birthday, Dear $studentName! 🎂\n" +
+                "\n" +
+                "Wishing you a very successful, prosperous, and fulfilling life ahead. May you always stay healthy, happy, and blessed, and may all your dreams and goals come true.\n" +
+                "\n" +
+                "Have a wonderful birthday and a fantastic year ahead! 🌟\n" +
+                "\n" +
+                "Warm regards,\n" +
+                "Shree Amarmohan Tuitions."
+        sendDirectSms(context, phone, message)
+        android.widget.Toast.makeText(context, "🎂 Birthday SMS sent to $studentName ($phone)!", android.widget.Toast.LENGTH_LONG).show()
+    }
+
+    /**
+     * Sent when a new student is enrolled by tutor.
+     * Automated welcome message to parent via SMS.
+     */
+    fun sendWelcomeSmsToParent(context: android.content.Context, parentPhone: String, studentName: String, parentName: String = "") {
+        val cleanParent = if (parentName.isNotBlank()) "Dear $parentName, " else "Dear Parent, "
+        val message = "${cleanParent}welcome to Shree AmarMohan Tuitions! $studentName has been enrolled successfully. You can log in with mobile number $parentPhone on the app to track attendance, test performance, and tuition schedules."
+        sendDirectSms(context, parentPhone, message)
+        android.widget.Toast.makeText(context, "Welcome SMS dispatched to parent ($parentPhone)!", android.widget.Toast.LENGTH_LONG).show()
+    }
+
+    /**
+     * Checks if the student's birthdate is today (matching day & month regardless of year format).
+     */
+    fun isBirthdayToday(birthDateStr: String): Boolean {
+        if (birthDateStr.isBlank()) return false
+        val todayCal = java.util.Calendar.getInstance()
+        val todayMonth = todayCal.get(java.util.Calendar.MONTH) + 1 // 1-12
+        val todayDay = todayCal.get(java.util.Calendar.DAY_OF_MONTH) // 1-31
+
+        val parts = birthDateStr.trim().split(Regex("[\\-\\/.\\s]")).filter { it.isNotEmpty() }
+        if (parts.size >= 3) {
+            if (parts[0].length == 4) {
+                // YYYY-MM-DD
+                val m = parts[1].toIntOrNull() ?: return false
+                val d = parts[2].toIntOrNull() ?: return false
+                return m == todayMonth && d == todayDay
+            } else if (parts[2].length == 4) {
+                // DD-MM-YYYY
+                val d = parts[0].toIntOrNull() ?: return false
+                val m = parts[1].toIntOrNull() ?: return false
+                return m == todayMonth && d == todayDay
+            }
+        } else if (parts.size == 2) {
+            // DD-MM
+            val d = parts[0].toIntOrNull() ?: return false
+            val m = parts[1].toIntOrNull() ?: return false
+            return m == todayMonth && d == todayDay
+        }
+        return false
+    }
+
+    /**
+     * Checks all students and sends automatic birthday greetings once per day.
+     */
+    fun checkAndSendAutomaticBirthdayGreetings(context: android.content.Context) {
+        val hasSmsPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.SEND_SMS
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!hasSmsPermission) {
+            android.util.Log.d("SMS_DISPATCH", "Skipping automatic birthday SMS check: SEND_SMS permission not granted yet.")
+            return
+        }
+
+        val todayDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+        val allStudents = students.value
+        allStudents.forEach { student ->
+            if (isBirthdayToday(student.birthDate) && student.parentPhone.isNotBlank()) {
+                val sentKey = "birthday_sms_sent_${student.slNo}_$todayDate"
+                val alreadySent = prefs.getBoolean(sentKey, false)
+                if (!alreadySent) {
+                    sendBirthdayGreetingSms(context, student.parentPhone, student.name)
+                    prefs.edit()
+                        .putBoolean(sentKey, true)
+                        .putBoolean("birthday_sms_sent_ever_${student.slNo}", true)
+                        .apply()
+                }
+            }
+        }
+    }
+
+    fun isBirthdaySmsSentToday(studentSlNo: String): Boolean {
+        val todayDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+        val sentKey = "birthday_sms_sent_${studentSlNo}_$todayDate"
+        return prefs.getBoolean(sentKey, false)
+    }
+
+    fun isBirthdaySmsSentToday(studentSlNo: Int): Boolean {
+        return isBirthdaySmsSentToday(studentSlNo.toString())
+    }
+
+    fun isBirthdaySmsSentEver(studentSlNo: String): Boolean {
+        return prefs.getBoolean("birthday_sms_sent_ever_${studentSlNo}", false)
+    }
+
+    fun sendBirthdayGreetingManually(context: android.content.Context, student: Student) {
+        val todayDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+        val sentKey = "birthday_sms_sent_${student.slNo}_$todayDate"
+        sendBirthdayGreetingSms(context, student.parentPhone, student.name)
+        prefs.edit()
+            .putBoolean(sentKey, true)
+            .putBoolean("birthday_sms_sent_ever_${student.slNo}", true)
+            .apply()
     }
 
     /**
@@ -1023,7 +1285,9 @@ class MainViewModel(private val repository: StudentRepository, private val conte
         tuitionFee: Double = 0.0,
         isPaid: Boolean = false,
         demoFee: Double = 0.0,
-        parentFlatNo: String = ""
+        parentFlatNo: String = "",
+        parentName: String = "",
+        birthDate: String = ""
     ) {
         if (slNo.trim().isEmpty() || name.trim().isEmpty() || phone.trim().isEmpty()) {
             return
@@ -1031,15 +1295,24 @@ class MainViewModel(private val repository: StudentRepository, private val conte
 
         viewModelScope.launch {
             val existing = getStudent(slNo)
-            val base = existing ?: Student(slNo = slNo, name = name, parentPhone = phone, parentFlatNo = parentFlatNo)
+            val base = existing ?: Student(
+                slNo = slNo,
+                name = name,
+                parentPhone = phone,
+                parentFlatNo = parentFlatNo,
+                parentName = parentName,
+                birthDate = birthDate
+            )
 
             val updated = base.copy(
                 name = name,
                 parentPhone = phone,
+                parentName = if (parentName.isNotEmpty()) parentName else base.parentName,
                 school = school,
                 board = board,
                 standard = standard,
                 studentEmail = email,
+                birthDate = if (birthDate.isNotEmpty()) birthDate else base.birthDate,
                 syllabus = syllabus,
                 tuitionFee = tuitionFee,
                 isFeesPaid = isPaid,
@@ -1054,7 +1327,23 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                 persistStudentUpdate(finalUpdated)
             } else {
                 persistStudentAdd(finalUpdated)
+                // Automated welcome message to parents via SMS as soon as student is added
+                if (finalUpdated.parentPhone.isNotBlank()) {
+                    sendWelcomeSmsToParent(context, finalUpdated.parentPhone, finalUpdated.name, finalUpdated.parentName)
+                }
             }
+
+            // Immediately check if today is student's birthday and dispatch SMS to parent
+            if (finalUpdated.birthDate.isNotBlank() && isBirthdayToday(finalUpdated.birthDate) && finalUpdated.parentPhone.isNotBlank()) {
+                val todayDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+                val sentKey = "birthday_sms_sent_${finalUpdated.slNo}_$todayDate"
+                val alreadySent = prefs.getBoolean(sentKey, false)
+                if (!alreadySent) {
+                    sendBirthdayGreetingSms(context, finalUpdated.parentPhone, finalUpdated.name)
+                    prefs.edit().putBoolean(sentKey, true).apply()
+                }
+            }
+
             if (!_isTutorTestMode.value) {
                 refreshData()
             }
@@ -1064,6 +1353,18 @@ class MainViewModel(private val repository: StudentRepository, private val conte
     fun updateStudent(student: Student) {
         viewModelScope.launch {
             persistStudentUpdate(student)
+
+            // Immediately check if today is student's birthday and dispatch SMS to parent
+            if (student.birthDate.isNotBlank() && isBirthdayToday(student.birthDate) && student.parentPhone.isNotBlank()) {
+                val todayDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+                val sentKey = "birthday_sms_sent_${student.slNo}_$todayDate"
+                val alreadySent = prefs.getBoolean(sentKey, false)
+                if (!alreadySent) {
+                    sendBirthdayGreetingSms(context, student.parentPhone, student.name)
+                    prefs.edit().putBoolean(sentKey, true).apply()
+                }
+            }
+
             if (!_isTutorTestMode.value) {
                 refreshData()
             }

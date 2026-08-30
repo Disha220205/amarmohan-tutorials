@@ -19,6 +19,7 @@ data class Student(
     @Json(name = "school") val school: String = "",
     @Json(name = "board") val board: String = "",
     @Json(name = "student_email") val studentEmail: String = "",
+    @Json(name = "birth_date") val birthDate: String = "",
     @Json(name = "subjects_json") val subjectsJson: String = "[]", // Serialized list of SubjectMark objects
 
     // Attendance data

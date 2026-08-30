@@ -1,11 +1,8 @@
 package com.amarmohan.presentation.screens
 
-import android.graphics.Bitmap
-import android.net.Uri
 import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -15,14 +12,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -30,27 +27,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
 import coil.compose.AsyncImage
 import com.amarmohan.domain.model.*
 import com.amarmohan.presentation.viewmodel.MainViewModel
 import java.text.SimpleDateFormat
-import java.util.Date
+import java.util.Calendar
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -73,7 +71,11 @@ fun ParentDashboard(
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator(color = Color(0xFF6200EE))
                 Spacer(modifier = Modifier.height(12.dp))
-                Text("Loading student details...", color = Color.Gray)
+                Text(
+                    text = "Loading verified student profile...",
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodyMedium
+                )
             }
         }
         return
@@ -81,7 +83,7 @@ fun ParentDashboard(
 
     val student = currentStudent!!
 
-    // Active sub-view tabs (0: Dashboard, 1: Test Papers, 2: Edit Student)
+    // Active sub-view tabs (0: Dashboard, 1: Marksheets, 2: Student Information)
     var activeSubViewTab by remember { mutableStateOf(0) }
     // Dashboard sub-tabs (0: Performance, 1: Attendance, 2: Syllabus Notes)
     var activeDashboardSubTab by remember { mutableStateOf(0) }
@@ -89,35 +91,13 @@ fun ParentDashboard(
     // Settings dropdown
     var showSettingsMenu by remember { mutableStateOf(false) }
 
-    // Edit Student Registry Parameters State
-    var editName by remember(student.name) { mutableStateOf(student.name) }
-    var editPhone by remember(student.parentPhone) { mutableStateOf(student.parentPhone) }
-    var editFlatNo by remember(student.parentFlatNo) { mutableStateOf(student.parentFlatNo) }
-    var editClass by remember(student.standard) { mutableStateOf(student.standard) }
-    var editSchool by remember(student.school) { mutableStateOf(student.school) }
-    var editBoard by remember(student.board) { mutableStateOf(student.board) }
-    var editEmail by remember(student.studentEmail) { mutableStateOf(student.studentEmail) }
+    // Marksheet preview dialog
+    var previewPaperUrl by remember { mutableStateOf<String?>(null) }
+    var previewPaperTitle by remember { mutableStateOf("") }
 
-    var editSubjectsList by remember(student.subjectsJson) { mutableStateOf(student.getSubjects()) }
-    var selectedSubjectDropdown by remember { mutableStateOf("") }
-    var showAddSubjectMenu by remember { mutableStateOf(false) }
-
-    val availableSubjects = remember {
-        listOf("Physics", "Mathematics", "Chemistry", "Biology", "English", "Social Studies", "Hindi", "Computer Science", "Science")
-    }
-
-    // Syllabus States
-    var newSyllabusSubjectInput by remember { mutableStateOf("") }
-    var newSyllabusTopicInput by remember { mutableStateOf("") }
-    var isEditingSyllabus by remember { mutableStateOf(false) }
-
-    // Test Paper Upload States
-    var attachmentSubjectText by remember { mutableStateOf("") }
-    var attachmentMarksText by remember { mutableStateOf("") }
-    var attachmentMaxMarksText by remember { mutableStateOf("100") }
-    var capturedBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
-    var showTestPaperSubjectMenu by remember { mutableStateOf(false) }
+    // Test Paper Query Dialog States
+    var querySelectedPaper by remember { mutableStateOf<TestPaper?>(null) }
+    var queryText by remember { mutableStateOf("") }
 
     // Confirmation dialog state
     var showLogoutConfirmDialog by remember { mutableStateOf(false) }
@@ -131,56 +111,31 @@ fun ParentDashboard(
     var newPasswordVisible by remember { mutableStateOf(false) }
     var confirmPasswordVisible by remember { mutableStateOf(false) }
 
-    // Camera & File Pickers
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            selectedImageUri = uri
-            capturedBitmap = null
-            Toast.makeText(context, "File Selected!", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    val cameraLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicturePreview()
-    ) { bitmap: Bitmap? ->
-        if (bitmap != null) {
-            capturedBitmap = bitmap
-            selectedImageUri = null
-            Toast.makeText(context, "Photo Captured!", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted: Boolean ->
-        if (isGranted) {
-            cameraLauncher.launch(null)
-        } else {
-            Toast.makeText(context, "Camera permission required.", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    val onLaunchCamera = {
-        val permissionCheck = androidx.core.content.ContextCompat.checkSelfPermission(
-            context,
-            android.Manifest.permission.CAMERA
-        )
-        if (permissionCheck == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            cameraLauncher.launch(null)
-        } else {
-            cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
-        }
-    }
-
     val subjects = student.getSubjects()
+    val testPapers = student.getTestPapers()
     val attendance = student.getAttendance()
-    val presentDays = attendance.count { it.value }
-    val totalDays = attendance.size.coerceAtLeast(1)
-    val attendancePct = presentDays.toFloat() / totalDays.toFloat()
+    val cal = java.util.Calendar.getInstance()
+    val daysInMonth = cal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+    val currentMonthKey = java.text.SimpleDateFormat("yyyy-MM", java.util.Locale.getDefault()).format(cal.time)
+    val monthAttendance = attendance.filterKeys { it.startsWith(currentMonthKey) && !it.startsWith("fee_") }
+    val presentDays = if (monthAttendance.isNotEmpty()) {
+        monthAttendance.count { it.value }
+    } else {
+        attendance.filterKeys { !it.startsWith("fee_") }.count { it.value }
+    }
+    val attendancePct = (presentDays.toFloat() / daysInMonth.toFloat()).coerceIn(0f, 1f)
 
-    val avgScorePct = if (subjects.isNotEmpty()) {
+    // Performance calculated from all tutor-uploaded marksheets & subject scores
+    val allScoreEntries = remember(subjects, testPapers) {
+        val sScores = subjects.filter { it.maxMarks > 0 }.map { it.marks / it.maxMarks }
+        val pScores = testPapers.filter { (it.totalMarks ?: 0.0) > 0.0 && (it.marksObtained != null) }
+            .map { it.marksObtained!! / it.totalMarks!! }
+        sScores + pScores
+    }
+
+    val avgScorePct = if (allScoreEntries.isNotEmpty()) {
+        (allScoreEntries.average() * 100).toInt()
+    } else if (subjects.isNotEmpty()) {
         (subjects.map { if (it.maxMarks > 0) it.marks / it.maxMarks else 0.0 }.average() * 100).toInt()
     } else {
         0
@@ -259,16 +214,7 @@ fun ParentDashboard(
                                     confirmPasswordInput = ""
                                     showChangePasswordDialog = true
                                 },
-                                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFF7A68E6)) },
-                                modifier = Modifier.testTag("change_password_menu_item")
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Edit Student Profile") },
-                                onClick = {
-                                    showSettingsMenu = false
-                                    activeSubViewTab = 2
-                                },
-                                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) }
+                                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Log Out") },
@@ -276,57 +222,85 @@ fun ParentDashboard(
                                     showSettingsMenu = false
                                     showLogoutConfirmDialog = true
                                 },
-                                leadingIcon = { Icon(Icons.Default.ExitToApp, contentDescription = null, tint = Color.Red) }
+                                leadingIcon = { Icon(Icons.Default.ExitToApp, contentDescription = null) }
                             )
                         }
                     }
                 }
             }
         },
-        containerColor = Color(0xFFF9F7FF),
-        modifier = modifier.fillMaxSize()
+        containerColor = Color.White
     ) { innerPadding ->
         Column(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxSize()
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
         ) {
-            // Sibling Switcher if parent has multiple children
+            // SIBLING QUICK-SWITCH BAR
             if (siblingStudents.size > 1) {
-                Row(
+                Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFFEDE9FE))
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF3EDFF)),
+                    border = BorderStroke(1.dp, Color(0xFFDDD0FC))
                 ) {
-                    Text(
-                        text = "Child Profile:",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF5138B8)
-                    )
-                    siblingStudents.forEach { sibling ->
-                        val isSelected = sibling.slNo == student.slNo
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = { viewModel.selectParentStudent(sibling.slNo) },
-                            label = { Text(sibling.name) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = Color.White,
-                                selectedLabelColor = Color(0xFF4F46E5),
-                                containerColor = Color.Transparent,
-                                labelColor = Color(0xFF64748B)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Groups,
+                                contentDescription = null,
+                                tint = Color(0xFF5138B8),
+                                modifier = Modifier.size(18.dp)
                             )
-                        )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Registered Children (${siblingStudents.size}):",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF5138B8)
+                            )
+                        }
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.horizontalScroll(rememberScrollState())
+                        ) {
+                            siblingStudents.forEach { sib ->
+                                val isSelected = sib.slNo == student.slNo
+                                Surface(
+                                    onClick = { viewModel.selectParentStudent(sib.slNo) },
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = if (isSelected) Color(0xFF6200EE) else Color.White,
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (isSelected) Color(0xFF6200EE) else Color(0xFFDCD6FF)
+                                    ),
+                                    modifier = Modifier.testTag("sibling_chip_${sib.slNo}")
+                                ) {
+                                    Text(
+                                        text = sib.name,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) Color.White else Color(0xFF5138B8),
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
 
-            // STUDENT INFO BADGE CARD (Matches Screenshot 1, 2, 3)
+            // STUDENT HEADER SECTION (Matching App Header & Showing Parent Details)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -339,32 +313,80 @@ fun ParentDashboard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        // Sl No pill tag
-                        Box(
-                            modifier = Modifier
-                                .border(1.dp, Color(0xFF7A68E6), RoundedCornerShape(6.dp))
-                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        // Sl No and Fee Status badges
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text(
-                                text = "Sl No ${student.slNo}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF5138B8),
-                                fontWeight = FontWeight.Bold
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .border(1.dp, Color(0xFF7A68E6), RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "Sl No ${student.slNo}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFF5138B8),
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            val isCleared = student.isFeesPaid || student.dueAmount <= 0.0
+                            Surface(
+                                color = if (isCleared) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
+                                border = BorderStroke(1.dp, if (isCleared) Color(0xFFA5D6A7) else Color(0xFFEF9A9A)),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text(
+                                    text = if (isCleared) "Fees: Cleared ✓" else "Fees Due: ₹${student.dueAmount.toInt()}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isCleared) Color(0xFF166534) else Color(0xFF991B1B),
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                )
+                            }
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = student.name,
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF32236F)
                         )
+
+                        // Parent name and number displayed directly below student name
+                        val parentDetail = listOfNotNull(
+                            if (student.parentName.isNotBlank()) "Parent: ${student.parentName}" else if (student.parentPhone.isNotBlank()) "Parent" else null,
+                            if (student.parentPhone.isNotBlank()) student.parentPhone else null
+                        ).joinToString(" • ")
+
+                        if (parentDetail.isNotBlank()) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(vertical = 2.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Person,
+                                    contentDescription = null,
+                                    tint = Color(0xFF6D28D9),
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = parentDetail,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF6D28D9)
+                                )
+                            }
+                        }
+
                         val schoolInfo = listOf(student.standard, student.board, student.school)
                             .filter { it.isNotEmpty() }
                             .joinToString(" • ")
                         Text(
                             text = schoolInfo.ifEmpty { "Class N/A" },
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodySmall,
                             color = Color.Gray
                         )
                     }
@@ -387,7 +409,7 @@ fun ParentDashboard(
                 }
             }
 
-            // HORIZONTAL SUB-VIEW TABS (Dashboard | Test Papers | Edit Student)
+            // HORIZONTAL SUB-VIEW TABS (Dashboard | Marksheets | Student Information)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -397,12 +419,13 @@ fun ParentDashboard(
                 horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                listOf("Dashboard", "Test Papers", "Edit Student").forEachIndexed { idx, label ->
+                listOf("Dashboard", "Marksheets", "Student Information").forEachIndexed { idx, label ->
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .clickable { activeSubViewTab = idx }
                             .padding(vertical = 6.dp, horizontal = 12.dp)
+                            .testTag("parent_tab_$idx")
                     ) {
                         Text(
                             text = label,
@@ -430,89 +453,22 @@ fun ParentDashboard(
             // TAB CONTENTS SWITCHING
             when (activeSubViewTab) {
                 0 -> {
-                    // TAB 0: DASHBOARD TAB
+                    // ==========================================
+                    // TAB 0: MAIN DASHBOARD TAB
+                    // ==========================================
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        // TOP SUMMARY CARDS (Marks Score & Attendance)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            // Marks Score Card
-                            Card(
-                                modifier = Modifier.weight(1f),
-                                colors = CardDefaults.cardColors(containerColor = Color(0xFFF3E8FF)),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Column(modifier = Modifier.padding(14.dp)) {
-                                    Text(
-                                        text = "${avgScorePct}%",
-                                        style = MaterialTheme.typography.titleLarge,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF5138B8)
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Default.MenuBook,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(12.dp),
-                                            tint = Color.Gray
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = "Marks Score",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Color.Gray
-                                        )
-                                    }
-                                }
-                            }
-
-                            // Attendance Summary Card
-                            Card(
-                                modifier = Modifier.weight(1f),
-                                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF0F2)),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Column(modifier = Modifier.padding(14.dp)) {
-                                    Text(
-                                        text = "$presentDays/$totalDays",
-                                        style = MaterialTheme.typography.titleLarge,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFFEC4899)
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Default.FactCheck,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(12.dp),
-                                            tint = Color.Gray
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = "Attendance",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Color.Gray
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        // CATEGORY PILL ROW (Performance | Attendance | Syllabus Notes)
+                        // CATEGORY PILL ROW (Performance | Attendance Calendar | Syllabus Notes)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(Color(0xFFEDE9FE), RoundedCornerShape(16.dp))
-                                .padding(8.dp)
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                .padding(6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             // 1. Performance Button
@@ -524,21 +480,21 @@ fun ParentDashboard(
                                 ),
                                 elevation = if (activeDashboardSubTab == 0) ButtonDefaults.buttonElevation(defaultElevation = 2.dp) else null,
                                 shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.defaultMinSize(minWidth = 125.dp),
-                                contentPadding = PaddingValues(vertical = 12.dp, horizontal = 16.dp)
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(vertical = 10.dp, horizontal = 4.dp)
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Icon(
                                         imageVector = Icons.Default.School,
                                         contentDescription = "Performance",
-                                        modifier = Modifier.size(24.dp)
+                                        modifier = Modifier.size(20.dp)
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    Text("Performance", fontSize = 12.sp, fontWeight = FontWeight.Black, maxLines = 1)
+                                    Text("Performance", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                                 }
                             }
 
-                            // 2. Attendance Button
+                            // 2. Attendance Calendar Button
                             Button(
                                 onClick = { activeDashboardSubTab = 1 },
                                 colors = ButtonDefaults.buttonColors(
@@ -547,17 +503,17 @@ fun ParentDashboard(
                                 ),
                                 elevation = if (activeDashboardSubTab == 1) ButtonDefaults.buttonElevation(defaultElevation = 2.dp) else null,
                                 shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.defaultMinSize(minWidth = 125.dp),
-                                contentPadding = PaddingValues(vertical = 12.dp, horizontal = 16.dp)
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(vertical = 10.dp, horizontal = 4.dp)
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Icon(
-                                        imageVector = Icons.Default.FactCheck,
-                                        contentDescription = "Attendance",
-                                        modifier = Modifier.size(24.dp)
+                                        imageVector = Icons.Default.CalendarMonth,
+                                        contentDescription = "Attendance Calendar",
+                                        modifier = Modifier.size(20.dp)
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    Text("Attendance", fontSize = 12.sp, fontWeight = FontWeight.Black, maxLines = 1)
+                                    Text("Attendance", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                                 }
                             }
 
@@ -570,17 +526,17 @@ fun ParentDashboard(
                                 ),
                                 elevation = if (activeDashboardSubTab == 2) ButtonDefaults.buttonElevation(defaultElevation = 2.dp) else null,
                                 shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.defaultMinSize(minWidth = 125.dp),
-                                contentPadding = PaddingValues(vertical = 12.dp, horizontal = 16.dp)
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(vertical = 10.dp, horizontal = 4.dp)
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Icon(
                                         imageVector = Icons.Default.MenuBook,
                                         contentDescription = "Syllabus Notes",
-                                        modifier = Modifier.size(24.dp)
+                                        modifier = Modifier.size(20.dp)
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    Text("Syllabus Notes", fontSize = 12.sp, fontWeight = FontWeight.Black, maxLines = 1)
+                                    Text("Syllabus", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                                 }
                             }
                         }
@@ -590,82 +546,217 @@ fun ParentDashboard(
                         // SUB-CATEGORY CONTENT SWITCH
                         when (activeDashboardSubTab) {
                             0 -> {
-                                // PERFORMANCE SUB-TAB: Graph + Records
-                                ParentPerformanceMarksLineChart(subjects)
+                                // PERFORMANCE SUB-TAB: Graph + Records Calculated from Tutor-Uploaded Marksheets
+                                ParentPerformanceMarksLineChart(subjects = subjects, testPapers = testPapers)
 
-                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text(
-                                        text = "Subject-wise Performance Records:",
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF32236F),
-                                        style = MaterialTheme.typography.bodyMedium
-                                    )
+                                val studentChosenEvalSubjects = remember(subjects, testPapers) {
+                                    (subjects.map { it.subjectName } + testPapers.map { it.subjectName }).filter { it.isNotBlank() }.distinct()
+                                }
+                                val expandedParentEvalSubjects = remember { mutableStateMapOf<String, Boolean>() }
 
-                                    if (subjects.isEmpty()) {
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "Subject-wise Marks Breakdown :",
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF32236F),
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        if (studentChosenEvalSubjects.isNotEmpty()) {
+                                            Text("${studentChosenEvalSubjects.size} Subjects", fontSize = 11.sp, color = Color(0xFF7C3AED), fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+
+                                    if (studentChosenEvalSubjects.isEmpty()) {
                                         Card(
                                             modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                                             colors = CardDefaults.cardColors(containerColor = Color.White),
                                             border = BorderStroke(1.dp, Color(0xFFECE6FF))
                                         ) {
                                             Text(
-                                                text = "No test marks recorded for this student yet.",
+                                                text = "No test marks recorded by tutor yet.",
                                                 modifier = Modifier.padding(16.dp),
                                                 color = Color.Gray,
                                                 textAlign = TextAlign.Center
                                             )
                                         }
                                     } else {
-                                        subjects.forEach { score ->
+                                        // Render individual dropdown for all subjects chosen by the student (Subject 1 dropdown, Subject 2 dropdown, etc.)
+                                        studentChosenEvalSubjects.forEachIndexed { index, subjName ->
+                                            val isExpanded = expandedParentEvalSubjects[subjName] ?: true
+                                            val subjRecords = subjects.filter { it.subjectName.equals(subjName, ignoreCase = true) }
+                                            val tpRecords = testPapers.filter { it.subjectName.equals(subjName, ignoreCase = true) }
+                                            val primaryScore = subjRecords.firstOrNull()
+                                            val marksVal = primaryScore?.marks ?: (tpRecords.firstOrNull()?.marksObtained ?: 0.0)
+                                            val maxMarksVal = primaryScore?.maxMarks ?: (tpRecords.firstOrNull()?.totalMarks ?: 100.0)
+                                            val pct = if (maxMarksVal > 0) ((marksVal / maxMarksVal) * 100).toInt() else 0
+                                            val statusColor = if (pct >= 80) Color(0xFF10B981) else if (pct >= 60) Color(0xFF7C3AED) else Color(0xFFF59E0B)
+
                                             Card(
                                                 modifier = Modifier.fillMaxWidth(),
                                                 colors = CardDefaults.cardColors(containerColor = Color.White),
-                                                border = BorderStroke(1.dp, Color(0xFFEDE9FE)),
+                                                border = BorderStroke(1.dp, if (isExpanded) Color(0xFFC7D2FE) else Color(0xFFEDE9FE)),
                                                 shape = RoundedCornerShape(12.dp)
                                             ) {
-                                                Row(
-                                                    modifier = Modifier.padding(14.dp),
-                                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Column {
-                                                        Text(
-                                                            text = score.subjectName,
-                                                            fontWeight = FontWeight.Bold,
-                                                            color = Color(0xFF1F2937),
-                                                            style = MaterialTheme.typography.titleMedium
-                                                        )
-                                                        Text(
-                                                            text = "Type: ${score.testType} • Date: ${score.testDate.ifEmpty { "15-07-2026" }}",
-                                                            style = MaterialTheme.typography.labelSmall,
-                                                            color = Color.Gray
+                                                Column(modifier = Modifier.fillMaxWidth()) {
+                                                    // Dropdown Header Row
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .background(if (isExpanded) Color(0xFFF5F3FF) else Color.White)
+                                                            .clickable { expandedParentEvalSubjects[subjName] = !isExpanded }
+                                                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .size(24.dp)
+                                                                    .clip(CircleShape)
+                                                                    .background(Color(0xFFEDE9FE)),
+                                                                contentAlignment = Alignment.Center
+                                                            ) {
+                                                                Text("${index + 1}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF7C3AED))
+                                                            }
+                                                            Spacer(modifier = Modifier.width(8.dp))
+                                                            Column {
+                                                                Text(
+                                                                    text = "Subject ${index + 1}: $subjName",
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    color = Color(0xFF1E1B4B),
+                                                                    fontSize = 14.sp
+                                                                )
+                                                                Text(
+                                                                    text = if (isExpanded) "Tap to collapse" else "Tap to view subject marks and evaluation history",
+                                                                    fontSize = 10.sp,
+                                                                    color = Color.Gray
+                                                                )
+                                                            }
+                                                        }
+                                                        Icon(
+                                                            imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                                            contentDescription = "Toggle Dropdown",
+                                                            tint = Color(0xFF7C3AED)
                                                         )
                                                     }
-                                                    Column(horizontalAlignment = Alignment.End) {
-                                                        Text(
-                                                            text = "${score.marks.toInt()} / ${score.maxMarks.toInt()}",
-                                                            fontWeight = FontWeight.Black,
-                                                            color = Color(0xFF7C3AED),
-                                                            style = MaterialTheme.typography.titleMedium
-                                                        )
-                                                        val percent = if (score.maxMarks > 0) (score.marks / score.maxMarks * 100).toInt() else 0
-                                                        Text(
-                                                            text = "$percent% Acc",
-                                                            style = MaterialTheme.typography.labelSmall,
-                                                            color = Color.Gray
-                                                        )
+
+                                                    // Dropdown Content
+                                                    if (isExpanded) {
+                                                        Column(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .padding(14.dp),
+                                                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                                                        ) {
+                                                            // Marks Overview
+                                                            Row(
+                                                                modifier = Modifier.fillMaxWidth(),
+                                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                                verticalAlignment = Alignment.CenterVertically
+                                                            ) {
+                                                                Column {
+                                                                    Text("Marks Obtained", fontSize = 11.sp, color = Color.Gray)
+                                                                    Row(verticalAlignment = Alignment.Bottom) {
+                                                                        Text(
+                                                                            text = "${marksVal.toInt()}",
+                                                                            fontSize = 24.sp,
+                                                                            fontWeight = FontWeight.Black,
+                                                                            color = Color(0xFF1E1B4B)
+                                                                        )
+                                                                        Text(
+                                                                            text = " / ${maxMarksVal.toInt()}",
+                                                                            fontSize = 14.sp,
+                                                                            fontWeight = FontWeight.Bold,
+                                                                            color = Color.Gray,
+                                                                            modifier = Modifier.padding(bottom = 2.dp, start = 2.dp)
+                                                                        )
+                                                                    }
+                                                                }
+
+                                                                Column(horizontalAlignment = Alignment.End) {
+                                                                    val gradeTag = if (pct >= 90) "A+ Outstanding" else if (pct >= 75) "A Excellent" else if (pct >= 60) "B Good" else "Needs Attention"
+                                                                    Surface(
+                                                                        shape = RoundedCornerShape(8.dp),
+                                                                        color = statusColor.copy(alpha = 0.15f)
+                                                                    ) {
+                                                                        Text(
+                                                                            text = gradeTag,
+                                                                            fontSize = 11.sp,
+                                                                            fontWeight = FontWeight.Bold,
+                                                                            color = statusColor,
+                                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                                        )
+                                                                    }
+                                                                    Text(
+                                                                        text = "Accuracy: $pct%",
+                                                                        fontSize = 11.sp,
+                                                                        fontWeight = FontWeight.SemiBold,
+                                                                        color = Color.Gray,
+                                                                        modifier = Modifier.padding(top = 2.dp)
+                                                                    )
+                                                                }
+                                                            }
+
+                                                            // Evaluation Details
+                                                            Row(
+                                                                modifier = Modifier
+                                                                    .fillMaxWidth()
+                                                                    .background(Color(0xFFF8FAFC), RoundedCornerShape(8.dp))
+                                                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                                horizontalArrangement = Arrangement.SpaceBetween
+                                                            ) {
+                                                                Text(
+                                                                    text = "Evaluation: ${primaryScore?.testType ?: "Monthly Assessment"}",
+                                                                    fontSize = 11.sp,
+                                                                    color = Color(0xFF475569),
+                                                                    fontWeight = FontWeight.Medium
+                                                                )
+                                                                Text(
+                                                                    text = "Date: ${primaryScore?.testDate?.ifEmpty { "15-07-2026" } ?: (tpRecords.firstOrNull()?.testDate?.ifEmpty { "15-07-2026" } ?: "15-07-2026")}",
+                                                                    fontSize = 11.sp,
+                                                                    color = Color(0xFF64748B)
+                                                                )
+                                                            }
+
+                                                            if (tpRecords.isNotEmpty()) {
+                                                                Text("Test Paper Records for this Subject:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF475569))
+                                                                tpRecords.forEach { tp ->
+                                                                    Row(
+                                                                        modifier = Modifier
+                                                                            .fillMaxWidth()
+                                                                            .background(Color(0xFFF1F5F9), RoundedCornerShape(6.dp))
+                                                                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                                                                        horizontalArrangement = Arrangement.SpaceBetween
+                                                                    ) {
+                                                                        Text("Paper (${tp.testDate})", fontSize = 10.sp, color = Color(0xFF334155))
+                                                                        Text("${tp.marksObtained?.toInt() ?: 0}/${tp.totalMarks?.toInt() ?: 0}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF7C3AED))
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
                                     }
                                 }
+                                // FEES DUE CARD (Color Indication: Red for Due, Green for Paid)
+                                val isFeesPaidOrCleared = student.isFeesPaid || student.dueAmount <= 0.0
+                                val feeContainerBg = if (isFeesPaidOrCleared) Color(0xFFF0FDF4) else Color(0xFFFEF2F2)
+                                val feeBorderColor = if (isFeesPaidOrCleared) Color(0xFF86EFAC) else Color(0xFFFCA5A5)
+                                val feeAccentColor = if (isFeesPaidOrCleared) Color(0xFF166534) else Color(0xFF991B1B)
+                                val feeBadgeBg = if (isFeesPaidOrCleared) Color(0xFFDCFCE7) else Color(0xFFFEE2E2)
 
-                                // FEES DUE CARD
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
                                     shape = RoundedCornerShape(16.dp),
-                                    colors = CardDefaults.cardColors(containerColor = Color(0xFFEBF1FF)),
-                                    border = BorderStroke(1.dp, Color(0xFFD3E0FF))
+                                    colors = CardDefaults.cardColors(containerColor = feeContainerBg),
+                                    border = BorderStroke(1.5.dp, feeBorderColor)
                                 ) {
                                     Column(modifier = Modifier.padding(16.dp)) {
                                         Row(
@@ -673,26 +764,42 @@ fun ParentDashboard(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Text(
-                                                text = "Fees Due",
-                                                style = MaterialTheme.typography.titleMedium,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = Color(0xFF1E3A8A)
-                                            )
-                                            val actualDue = student.dueAmount.toInt()
-                                            Text(
-                                                text = "₹$actualDue",
-                                                style = MaterialTheme.typography.titleLarge,
-                                                fontWeight = FontWeight.Black,
-                                                color = Color(0xFF1E3A8A)
-                                            )
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    imageVector = if (isFeesPaidOrCleared) Icons.Default.CheckCircle else Icons.Default.Warning,
+                                                    contentDescription = null,
+                                                    tint = feeAccentColor,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = if (isFeesPaidOrCleared) "Fees Status" else "Fees Due",
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = feeAccentColor
+                                                )
+                                            }
+                                            Surface(
+                                                color = feeBadgeBg,
+                                                border = BorderStroke(1.dp, feeBorderColor),
+                                                shape = RoundedCornerShape(8.dp)
+                                            ) {
+                                                Text(
+                                                    text = if (isFeesPaidOrCleared) "PAID (₹0 DUE)" else "DUE: ₹${student.dueAmount.toInt()}",
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    fontWeight = FontWeight.Black,
+                                                    color = feeAccentColor,
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                                )
+                                            }
                                         }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        val feeSubtext = if (student.isFeesPaid || student.dueAmount <= 0.0) "All dues cleared!" else "Pending Outstanding Due"
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        val feeSubtext = if (isFeesPaidOrCleared) "All tuition fees cleared ✓ No outstanding balance" else "Payment pending: Please clear outstanding tuition fee ₹${student.dueAmount.toInt()}"
                                         Text(
                                             text = feeSubtext,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = if (student.isFeesPaid || student.dueAmount <= 0.0) Color(0xFF10B981) else Color(0xFF2563EB)
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Medium,
+                                            color = feeAccentColor
                                         )
                                     }
                                 }
@@ -724,7 +831,7 @@ fun ParentDashboard(
                                     Button(
                                         onClick = {
                                             val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$tutorPhoneToContact")).apply {
-                                                putExtra("sms_body", "Hello ma'am, regarding student ${student.name}.")
+                                                putExtra("sms_body", "Hello Ma'am, regarding student ${student.name}.")
                                             }
                                             context.startActivity(intent)
                                         },
@@ -742,8 +849,11 @@ fun ParentDashboard(
                             }
 
                             1 -> {
-                                // ATTENDANCE SUB-TAB
-                                ParentAttendanceDonutChart(attendancePct, presentDays)
+                                // ATTENDANCE SUB-TAB WITH CALENDAR
+                                ParentAttendanceDonutChart(attendancePct, presentDays, daysInMonth)
+
+                                // Interactive Monthly Attendance Calendar
+                                ParentAttendanceCalendar(attendance = attendance)
 
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
@@ -753,40 +863,44 @@ fun ParentDashboard(
                                 ) {
                                     Column(modifier = Modifier.padding(14.dp)) {
                                         Text(
-                                            text = "Past Days Attendance Record:",
+                                            text = "Recent Attendance Entries:",
                                             fontWeight = FontWeight.Bold,
                                             color = Color(0xFF32236F),
                                             style = MaterialTheme.typography.bodyMedium
                                         )
                                         Spacer(modifier = Modifier.height(10.dp))
 
-                                        val daysList = listOf("2026-07-22", "2026-07-23", "2026-07-24", "2026-07-25", "2026-07-26")
-                                        daysList.forEach { dateStr ->
-                                            val isPresent = attendance[dateStr] ?: true
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(vertical = 6.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(dateStr, fontWeight = FontWeight.Medium)
-
-                                                val statusText = if (isPresent) "Present" else "Absent"
-                                                val containerColor = if (isPresent) Color(0xFFE8F5E9) else Color(0xFFFFEBEE)
-                                                val contentColor = if (isPresent) Color(0xFF2E7D32) else Color(0xFFC62828)
-
-                                                Box(
+                                        val sortedDates = attendance.keys.sortedDescending().take(10)
+                                        if (sortedDates.isEmpty()) {
+                                            Text("No attendance records logged yet.", color = Color.Gray, fontSize = 13.sp)
+                                        } else {
+                                            sortedDates.forEach { dateStr ->
+                                                val isPresent = attendance[dateStr] ?: true
+                                                Row(
                                                     modifier = Modifier
-                                                        .background(containerColor, shape = RoundedCornerShape(8.dp))
-                                                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                                                        .fillMaxWidth()
+                                                        .padding(vertical = 6.dp),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
                                                 ) {
-                                                    Text(
-                                                        text = statusText,
-                                                        color = contentColor,
-                                                        fontSize = 11.sp,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
+                                                    Text(dateStr, fontWeight = FontWeight.Medium)
+
+                                                    val statusText = if (isPresent) "Present" else "Absent"
+                                                    val containerColor = if (isPresent) Color(0xFFE8F5E9) else Color(0xFFFFEBEE)
+                                                    val contentColor = if (isPresent) Color(0xFF2E7D32) else Color(0xFFC62828)
+
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .background(containerColor, shape = RoundedCornerShape(8.dp))
+                                                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = statusText,
+                                                            color = contentColor,
+                                                            fontSize = 11.sp,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -795,13 +909,8 @@ fun ParentDashboard(
                             }
 
                             2 -> {
-                                // SYLLABUS NOTES SUB-TAB
+                                // SYLLABUS NOTES SUB-TAB (Read-Only)
                                 val syllabusItems = student.getSyllabusItems()
-                                val studentSubjects = student.getSubjects().map { it.subjectName }.distinct()
-
-                                if (newSyllabusSubjectInput.isEmpty() && studentSubjects.isNotEmpty()) {
-                                    newSyllabusSubjectInput = studentSubjects.first()
-                                }
 
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
@@ -822,123 +931,17 @@ fun ParentDashboard(
                                                 Icon(imageVector = Icons.Default.MenuBook, contentDescription = null, tint = Color(0xFF7A68E6))
                                                 Spacer(modifier = Modifier.width(6.dp))
                                                 Text(
-                                                    text = "Syllabus Notes Portions",
+                                                    text = "Curriculum & Syllabus Portions",
                                                     fontWeight = FontWeight.Bold,
                                                     color = Color(0xFF32236F),
                                                     style = MaterialTheme.typography.titleMedium
                                                 )
                                             }
-
-                                            Button(
-                                                onClick = { isEditingSyllabus = !isEditingSyllabus },
-                                                colors = ButtonDefaults.buttonColors(
-                                                    containerColor = if (isEditingSyllabus) Color(0xFF10B981) else Color(0xFF6D28D9)
-                                                ),
-                                                shape = RoundedCornerShape(8.dp),
-                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                            ) {
-                                                Icon(
-                                                    imageVector = if (isEditingSyllabus) Icons.Filled.CheckCircle else Icons.Filled.Edit,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(14.dp)
-                                                )
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                                Text(
-                                                    text = if (isEditingSyllabus) "View Checklist" else "Edit Syllabus",
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
                                         }
 
-                                        if (isEditingSyllabus) {
-                                            // Add Portion Form
-                                            Card(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                colors = CardDefaults.cardColors(containerColor = Color.White),
-                                                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                                                shape = RoundedCornerShape(12.dp)
-                                            ) {
-                                                Column(
-                                                    modifier = Modifier.padding(12.dp),
-                                                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                                                ) {
-                                                    Text("Add New Portion Topic", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium, color = Color(0xFF4F46E5))
-
-                                                    if (studentSubjects.isEmpty()) {
-                                                        Text(
-                                                            text = "No enrolled subjects. Add subjects in Edit Student tab first.",
-                                                            style = MaterialTheme.typography.bodySmall,
-                                                            color = Color.Red
-                                                        )
-                                                    } else {
-                                                        Row(
-                                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                            modifier = Modifier
-                                                                .fillMaxWidth()
-                                                                .horizontalScroll(rememberScrollState())
-                                                        ) {
-                                                            studentSubjects.forEach { subj ->
-                                                                val isSelected = newSyllabusSubjectInput == subj
-                                                                FilterChip(
-                                                                    selected = isSelected,
-                                                                    onClick = { newSyllabusSubjectInput = subj },
-                                                                    label = { Text(subj, fontSize = 11.sp) },
-                                                                    colors = FilterChipDefaults.filterChipColors(
-                                                                        selectedContainerColor = Color(0xFFEEEBFF),
-                                                                        selectedLabelColor = Color(0xFF6D28D9)
-                                                                    )
-                                                                )
-                                                            }
-                                                        }
-                                                    }
-
-                                                    OutlinedTextField(
-                                                        value = newSyllabusTopicInput,
-                                                        onValueChange = { newSyllabusTopicInput = it },
-                                                        label = { Text("Topic Portion Description") },
-                                                        placeholder = { Text("e.g. Kinematics") },
-                                                        singleLine = true,
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        shape = RoundedCornerShape(8.dp)
-                                                    )
-
-                                                    Button(
-                                                        onClick = {
-                                                            val subject = newSyllabusSubjectInput.trim()
-                                                            val topic = newSyllabusTopicInput.trim()
-                                                            if (subject.isEmpty() || topic.isEmpty()) {
-                                                                Toast.makeText(context, "Please enter subject and topic", Toast.LENGTH_SHORT).show()
-                                                            } else {
-                                                                val newItem = SyllabusItem(
-                                                                    id = System.currentTimeMillis().toString(),
-                                                                    subjectName = subject,
-                                                                    topic = topic,
-                                                                    isCompleted = false
-                                                                )
-                                                                val updatedSyllabus = syllabusItems + newItem
-                                                                val updatedStudent = student.withSyllabusItems(updatedSyllabus)
-                                                                viewModel.updateStudent(updatedStudent)
-                                                                newSyllabusTopicInput = ""
-                                                                Toast.makeText(context, "Added portion to $subject!", Toast.LENGTH_SHORT).show()
-                                                            }
-                                                        },
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6D28D9)),
-                                                        shape = RoundedCornerShape(8.dp)
-                                                    ) {
-                                                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                                                        Spacer(modifier = Modifier.width(4.dp))
-                                                        Text("Add Portion Topic")
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        // Portion List Checklist
                                         if (syllabusItems.isEmpty()) {
                                             Text(
-                                                text = "No syllabus notes added yet. Click 'Edit Syllabus' above to add portions.",
+                                                text = "No syllabus topics assigned by tutor yet.",
                                                 color = Color.Gray,
                                                 fontSize = 12.sp,
                                                 modifier = Modifier.padding(vertical = 12.dp)
@@ -960,33 +963,18 @@ fun ParentDashboard(
                                                             .fillMaxWidth()
                                                             .clip(RoundedCornerShape(8.dp))
                                                             .background(Color.White)
-                                                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                                                            .padding(horizontal = 10.dp, vertical = 8.dp),
                                                         verticalAlignment = Alignment.CenterVertically,
                                                         horizontalArrangement = Arrangement.SpaceBetween
                                                     ) {
-                                                        Row(
-                                                            verticalAlignment = Alignment.CenterVertically,
-                                                            modifier = Modifier
-                                                                .weight(1f)
-                                                                .clickable {
-                                                                    val updatedList = syllabusItems.map {
-                                                                        if (it.id == item.id) it.copy(isCompleted = !it.isCompleted) else it
-                                                                    }
-                                                                    viewModel.updateStudent(student.withSyllabusItems(updatedList))
-                                                                }
-                                                        ) {
-                                                            Checkbox(
-                                                                checked = item.isCompleted,
-                                                                onCheckedChange = { checked ->
-                                                                    val updatedList = syllabusItems.map {
-                                                                        if (it.id == item.id) it.copy(isCompleted = checked) else it
-                                                                    }
-                                                                    viewModel.updateStudent(student.withSyllabusItems(updatedList))
-                                                                },
-                                                                colors = CheckboxDefaults.colors(
-                                                                    checkedColor = Color(0xFF10B981)
-                                                                )
+                                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                                            Icon(
+                                                                imageVector = if (item.isCompleted) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                                                                contentDescription = null,
+                                                                tint = if (item.isCompleted) Color(0xFF10B981) else Color.Gray,
+                                                                modifier = Modifier.size(18.dp)
                                                             )
+                                                            Spacer(modifier = Modifier.width(8.dp))
                                                             Text(
                                                                 text = item.topic,
                                                                 fontSize = 13.sp,
@@ -995,20 +983,13 @@ fun ParentDashboard(
                                                             )
                                                         }
 
-                                                        if (isEditingSyllabus) {
-                                                            IconButton(
-                                                                onClick = {
-                                                                    val updatedList = syllabusItems.filter { it.id != item.id }
-                                                                    viewModel.updateStudent(student.withSyllabusItems(updatedList))
-                                                                },
-                                                                modifier = Modifier.size(28.dp)
+                                                        if (item.isCompleted) {
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .background(Color(0xFFE8F5E9), RoundedCornerShape(6.dp))
+                                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
                                                             ) {
-                                                                Icon(
-                                                                    Icons.Default.Delete,
-                                                                    contentDescription = "Delete Portion",
-                                                                    tint = Color.Red,
-                                                                    modifier = Modifier.size(18.dp)
-                                                                )
+                                                                Text("Completed", fontSize = 10.sp, color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold)
                                                             }
                                                         }
                                                     }
@@ -1023,241 +1004,357 @@ fun ParentDashboard(
                 }
 
                 1 -> {
-                    // TAB 1: TEST PAPERS TAB (Matches Screenshot 3)
+                    // ==========================================
+                    // TAB 1: OFFICIAL MARKSHEETS (TUTOR-UPLOADED ONLY)
+                    // ==========================================
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
+                        // Information Banner
                         Card(
                             modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = Color.White),
-                            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                            shape = RoundedCornerShape(16.dp)
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFEDE9FE)),
+                            shape = RoundedCornerShape(14.dp)
                         ) {
-                            Column(
-                                modifier = Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            Row(
+                                modifier = Modifier.padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = "Co-Upload Testpaper Files (Supabase)",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF1E1B4B)
+                                Icon(
+                                    imageVector = Icons.Default.Verified,
+                                    contentDescription = null,
+                                    tint = Color(0xFF6D28D9),
+                                    modifier = Modifier.size(24.dp)
                                 )
-                                Text(
-                                    text = "Tutors and Parents can register high-quality copies of worksheets on Supabase bucket systems.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color.Gray
-                                )
-
-                                // Subject Dropdown Picker
-                                Box(modifier = Modifier.fillMaxWidth()) {
-                                    OutlinedTextField(
-                                        value = attachmentSubjectText,
-                                        onValueChange = {},
-                                        readOnly = true,
-                                        label = { Text("Select Enrolled Subject...") },
-                                        trailingIcon = {
-                                            IconButton(onClick = { showTestPaperSubjectMenu = !showTestPaperSubjectMenu }) {
-                                                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-                                            }
-                                        },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable { showTestPaperSubjectMenu = true },
-                                        shape = RoundedCornerShape(10.dp)
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "Official Marksheets & Test Papers",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = Color(0xFF4C1D95)
                                     )
-
-                                    DropdownMenu(
-                                        expanded = showTestPaperSubjectMenu,
-                                        onDismissRequest = { showTestPaperSubjectMenu = false }
-                                    ) {
-                                        val studentSubjects = student.getSubjects().map { it.subjectName }.distinct()
-                                        val displayList = if (studentSubjects.isNotEmpty()) studentSubjects else availableSubjects
-                                        displayList.forEach { subj ->
-                                            DropdownMenuItem(
-                                                text = { Text(subj) },
-                                                onClick = {
-                                                    attachmentSubjectText = subj
-                                                    showTestPaperSubjectMenu = false
-                                                }
-                                            )
-                                        }
-                                    }
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    OutlinedTextField(
-                                        value = attachmentMarksText,
-                                        onValueChange = { attachmentMarksText = it },
-                                        label = { Text("Marks Obtained") },
-                                        placeholder = { Text("e.g. 85") },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        modifier = Modifier.weight(1f),
-                                        shape = RoundedCornerShape(10.dp)
+                                    Text(
+                                        text = "All evaluation results and test papers are uploaded directly by the tutor.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFF5B21B6)
                                     )
-
-                                    OutlinedTextField(
-                                        value = attachmentMaxMarksText,
-                                        onValueChange = { attachmentMaxMarksText = it },
-                                        label = { Text("Max Total") },
-                                        placeholder = { Text("100") },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        modifier = Modifier.weight(1f),
-                                        shape = RoundedCornerShape(10.dp)
-                                    )
-                                }
-
-                                // Photo & File Buttons
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    Button(
-                                        onClick = { onLaunchCamera() },
-                                        modifier = Modifier.weight(1f),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)),
-                                        shape = RoundedCornerShape(10.dp)
-                                    ) {
-                                        Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Capture Photo")
-                                    }
-
-                                    Button(
-                                        onClick = { filePickerLauncher.launch("image/*") },
-                                        modifier = Modifier.weight(1f),
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
-                                        shape = RoundedCornerShape(10.dp)
-                                    ) {
-                                        Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Upload File")
-                                    }
-                                }
-
-                                // Photo Preview Box
-                                Card(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(130.dp),
-                                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
-                                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        if (selectedImageUri != null) {
-                                            AsyncImage(
-                                                model = selectedImageUri,
-                                                contentDescription = "Selected Image",
-                                                contentScale = ContentScale.Crop,
-                                                modifier = Modifier.fillMaxSize()
-                                            )
-                                        } else if (capturedBitmap != null) {
-                                            Text("Photo captured! Ready for sync.", color = Color(0xFF10B981), fontWeight = FontWeight.Bold)
-                                        } else {
-                                            Text(
-                                                text = "No direct photo loaded yet.",
-                                                color = Color.Gray,
-                                                fontSize = 13.sp
-                                            )
-                                        }
-                                    }
-                                }
-
-                                // Upload Button
-                                Button(
-                                    onClick = {
-                                        if (attachmentSubjectText.isEmpty()) {
-                                            Toast.makeText(context, "Please select a subject first", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            val marks = attachmentMarksText.toDoubleOrNull() ?: 0.0
-                                            val maxMarks = attachmentMaxMarksText.toDoubleOrNull() ?: 100.0
-                                            val newPaper = TestPaper(
-                                                id = System.currentTimeMillis().toString(),
-                                                subjectName = attachmentSubjectText,
-                                                testDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date()),
-                                                parentPhotoUri = selectedImageUri?.toString() ?: "https://via.placeholder.com/300",
-                                                marksObtained = marks,
-                                                totalMarks = maxMarks,
-                                                status = "Completed"
-                                            )
-                                            val currentTestPapers = student.getTestPapers()
-                                            val updatedStudent = student.withTestPapers(currentTestPapers + newPaper)
-                                            viewModel.updateStudent(updatedStudent)
-
-                                            attachmentMarksText = ""
-                                            capturedBitmap = null
-                                            selectedImageUri = null
-                                            Toast.makeText(context, "Test paper submitted!", Toast.LENGTH_SHORT).show()
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    Icon(Icons.Default.CloudUpload, contentDescription = null)
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Upload File to Supabase", fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
 
-                        // History section
-                        val testPapers = student.getTestPapers()
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                text = "Uploaded marksheets history:",
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF32236F),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
+                        val allUploadedPapers = testPapers
+                        if (allUploadedPapers.isEmpty() && subjects.isEmpty()) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color.White),
+                                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(24.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Description,
+                                        contentDescription = null,
+                                        tint = Color.LightGray,
+                                        modifier = Modifier.size(48.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = "No marksheets uploaded yet.",
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.Gray
+                                    )
+                                    Text(
+                                        text = "Evaluated papers will appear here once uploaded by the tutor.",
+                                        fontSize = 12.sp,
+                                        color = Color.LightGray,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+                        } else {
+                            var selectedMarksheetSubjectFilter by remember { mutableStateOf("All Chosen Subjects") }
+                            var showMarksheetSubjectDropdown by remember { mutableStateOf(false) }
+                            val studentChosenMarksheetSubjects = remember(subjects, allUploadedPapers) {
+                                (subjects.map { it.subjectName } + allUploadedPapers.map { it.subjectName }).filter { it.isNotBlank() }.distinct()
+                            }
 
-                            if (testPapers.isEmpty()) {
-                                Text("No marksheets uploaded yet.", color = Color.Gray, fontSize = 13.sp)
-                            } else {
-                                testPapers.forEach { paper ->
-                                    Card(
+                            if (studentChosenMarksheetSubjects.isNotEmpty()) {
+                                // Subject-wise dropdown selector for all subjects chosen by the student
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    OutlinedCard(
+                                        onClick = { showMarksheetSubjectDropdown = true },
                                         modifier = Modifier.fillMaxWidth(),
-                                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                                        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                                        shape = RoundedCornerShape(12.dp)
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = CardDefaults.outlinedCardColors(containerColor = Color.White),
+                                        border = BorderStroke(1.dp, Color(0xFFE2E8F0))
                                     ) {
                                         Row(
-                                            modifier = Modifier.padding(12.dp),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp, vertical = 8.dp),
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Icon(
-                                                    imageVector = Icons.Default.InsertDriveFile,
-                                                    contentDescription = null,
-                                                    tint = Color(0xFF6200EE),
-                                                    modifier = Modifier.size(28.dp)
-                                                )
-                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Icon(Icons.Default.MenuBook, contentDescription = null, tint = Color(0xFF6D28D9), modifier = Modifier.size(16.dp))
+                                                Spacer(modifier = Modifier.width(8.dp))
                                                 Column {
-                                                    Text(paper.subjectName, fontWeight = FontWeight.Bold, color = Color(0xFF1E1B4B))
-                                                    Text("Date: ${paper.testDate}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                                    Text("Filter Marksheets by Subject", fontSize = 10.sp, color = Color.Gray)
+                                                    Text(
+                                                        text = selectedMarksheetSubjectFilter,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFF1E1B4B)
+                                                    )
                                                 }
                                             }
-                                            val scoreText = if (paper.marksObtained != null && paper.totalMarks != null) {
-                                                "${paper.marksObtained!!.toInt()} / ${paper.totalMarks!!.toInt()}"
-                                            } else {
-                                                "Uploaded"
+                                            Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = Color(0xFF6D28D9))
+                                        }
+                                    }
+
+                                    DropdownMenu(
+                                        expanded = showMarksheetSubjectDropdown,
+                                        onDismissRequest = { showMarksheetSubjectDropdown = false }
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("All Chosen Subjects (${studentChosenMarksheetSubjects.size})", fontWeight = if (selectedMarksheetSubjectFilter == "All Chosen Subjects") FontWeight.Bold else FontWeight.Normal) },
+                                            onClick = {
+                                                selectedMarksheetSubjectFilter = "All Chosen Subjects"
+                                                showMarksheetSubjectDropdown = false
                                             }
+                                        )
+                                        HorizontalDivider()
+                                        studentChosenMarksheetSubjects.forEach { subj ->
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Text(
+                                                        subj,
+                                                        fontWeight = if (selectedMarksheetSubjectFilter == subj) FontWeight.Bold else FontWeight.Normal,
+                                                        color = if (selectedMarksheetSubjectFilter == subj) Color(0xFF6D28D9) else Color.Unspecified
+                                                    )
+                                                },
+                                                onClick = {
+                                                    selectedMarksheetSubjectFilter = subj
+                                                    showMarksheetSubjectDropdown = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            val filteredUploadedPapers = if (selectedMarksheetSubjectFilter == "All Chosen Subjects") {
+                                allUploadedPapers
+                            } else {
+                                allUploadedPapers.filter { it.subjectName.equals(selectedMarksheetSubjectFilter, ignoreCase = true) }
+                            }
+
+                            val filteredLedgerSubjects = if (selectedMarksheetSubjectFilter == "All Chosen Subjects") {
+                                subjects
+                            } else {
+                                subjects.filter { it.subjectName.equals(selectedMarksheetSubjectFilter, ignoreCase = true) }
+                            }
+
+                            if (filteredUploadedPapers.isEmpty() && filteredLedgerSubjects.isEmpty()) {
+                                Text(
+                                    text = "No marksheets or evaluations found for $selectedMarksheetSubjectFilter.",
+                                    fontSize = 12.sp,
+                                    color = Color.Gray,
+                                    modifier = Modifier.padding(vertical = 8.dp)
+                                )
+                            }
+
+                            // Render all tutor marksheets
+                            filteredUploadedPapers.forEach { paper ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                                    shape = RoundedCornerShape(14.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(14.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(40.dp)
+                                                        .clip(CircleShape)
+                                                        .background(Color(0xFFEDE9FE)),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.InsertDriveFile,
+                                                        contentDescription = null,
+                                                        tint = Color(0xFF6D28D9),
+                                                        modifier = Modifier.size(22.dp)
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Column {
+                                                    Text(
+                                                        text = paper.subjectName,
+                                                        fontWeight = FontWeight.Bold,
+                                                        style = MaterialTheme.typography.titleMedium,
+                                                        color = Color(0xFF1E1B4B)
+                                                    )
+                                                    Text(
+                                                        text = "Test Date: ${paper.testDate}",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = Color.Gray
+                                                    )
+                                                }
+                                            }
+
+                                            if (paper.marksObtained != null && paper.totalMarks != null) {
+                                                Column(horizontalAlignment = Alignment.End) {
+                                                    Text(
+                                                        text = "${paper.marksObtained!!.toInt()} / ${paper.totalMarks!!.toInt()}",
+                                                        fontWeight = FontWeight.Black,
+                                                        color = Color(0xFF10B981),
+                                                        style = MaterialTheme.typography.titleMedium
+                                                    )
+                                                    val pct = if (paper.totalMarks!! > 0) ((paper.marksObtained!! / paper.totalMarks!!) * 100).toInt() else 0
+                                                    Text(
+                                                        text = "$pct% Score",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = Color(0xFF059669),
+                                                        fontWeight = FontWeight.SemiBold
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        // Status badge and preview button if photo available
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .background(Color(0xFFECFDF5), RoundedCornerShape(6.dp))
+                                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                                            ) {
+                                                Text(
+                                                    text = "✓ Evaluated by Tutor",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color(0xFF065F46)
+                                                )
+                                            }
+
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        querySelectedPaper = paper
+                                                        queryText = ""
+                                                    },
+                                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF4F46E5)),
+                                                    border = BorderStroke(1.dp, Color(0xFFC7D2FE)),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                                ) {
+                                                    Icon(Icons.Default.QuestionAnswer, contentDescription = null, modifier = Modifier.size(13.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("Ask Query", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                }
+
+                                                val photoUrl = (paper.parentPhotoUri ?: "").ifEmpty { paper.tutorPhotoUri ?: "" }
+                                                if (photoUrl.isNotBlank() && photoUrl != "https://via.placeholder.com/300") {
+                                                    Button(
+                                                        onClick = {
+                                                            previewPaperUrl = photoUrl
+                                                            previewPaperTitle = "${paper.subjectName} (${paper.testDate})"
+                                                        },
+                                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED)),
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                                    ) {
+                                                        Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(14.dp))
+                                                        Spacer(modifier = Modifier.width(4.dp))
+                                                        Text("View Paper", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Show subject evaluation scores
+                            filteredLedgerSubjects.forEach { sm ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                                    shape = RoundedCornerShape(14.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(14.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(40.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(0xFFEDE9FE)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Grade,
+                                                    contentDescription = null,
+                                                    tint = Color(0xFF6D28D9),
+                                                    modifier = Modifier.size(22.dp)
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Column {
+                                                Text(
+                                                    text = sm.subjectName,
+                                                    fontWeight = FontWeight.Bold,
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    color = Color(0xFF1E1B4B)
+                                                )
+                                                Text(
+                                                    text = "${sm.testType} Evaluation",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = Color.Gray
+                                                )
+                                            }
+                                        }
+
+                                        Column(horizontalAlignment = Alignment.End) {
                                             Text(
-                                                text = scoreText,
+                                                text = "${sm.marks.toInt()} / ${sm.maxMarks.toInt()}",
                                                 fontWeight = FontWeight.Black,
-                                                color = Color(0xFF10B981)
+                                                color = Color(0xFF7C3AED),
+                                                style = MaterialTheme.typography.titleMedium
+                                            )
+                                            val pct = if (sm.maxMarks > 0) ((sm.marks / sm.maxMarks) * 100).toInt() else 0
+                                            Text(
+                                                text = "$pct% Acc",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color.Gray
                                             )
                                         }
                                     }
@@ -1268,118 +1365,50 @@ fun ParentDashboard(
                 }
 
                 2 -> {
-                    // TAB 2: EDIT STUDENT TAB (Matches Screenshot 2)
+                    // ==========================================
+                    // TAB 2: STUDENT INFORMATION (READ-ONLY OFFICIAL INFO SECTION)
+                    // ==========================================
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        // Enrolled Subjects & Marks Ledger Card
+                        // Notice Banner
                         Card(
                             modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = Color.White),
-                            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                            shape = RoundedCornerShape(16.dp)
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F3FF)),
+                            border = BorderStroke(1.dp, Color(0xFFDDD6FE)),
+                            shape = RoundedCornerShape(14.dp)
                         ) {
-                            Column(
-                                modifier = Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            Row(
+                                modifier = Modifier.padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = "Enrolled Subjects & Marks Ledger",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF1E1B4B)
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = null,
+                                    tint = Color(0xFF6D28D9),
+                                    modifier = Modifier.size(22.dp)
                                 )
-                                Text(
-                                    text = "Add, delete, or quick-edit student subjects here. Note: Changes are persistent only on saving below.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color.Gray
-                                )
-
-                                // Current Subjects List
-                                editSubjectsList.forEachIndexed { index, score ->
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = score.subjectName,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.weight(1f)
-                                        )
-
-                                        OutlinedTextField(
-                                            value = if (score.marks == 0.0) "" else score.marks.toInt().toString(),
-                                            onValueChange = { newScoreText ->
-                                                val scoreVal = newScoreText.toDoubleOrNull() ?: 0.0
-                                                editSubjectsList = editSubjectsList.toMutableList().also { list ->
-                                                    list[index] = score.copy(marks = scoreVal)
-                                                }
-                                            },
-                                            label = { Text("Score") },
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            modifier = Modifier.width(90.dp),
-                                            shape = RoundedCornerShape(8.dp)
-                                        )
-
-                                        IconButton(onClick = {
-                                            editSubjectsList = editSubjectsList.filterIndexed { i, _ -> i != index }
-                                        }) {
-                                            Icon(Icons.Default.Delete, contentDescription = "Delete Subject", tint = Color.Red)
-                                        }
-                                    }
-                                }
-
-                                // Add Subject Dropdown Row
-                                Box(modifier = Modifier.fillMaxWidth()) {
-                                    OutlinedTextField(
-                                        value = selectedSubjectDropdown,
-                                        onValueChange = {},
-                                        readOnly = true,
-                                        label = { Text("Add New Subject Registration...") },
-                                        trailingIcon = {
-                                            IconButton(onClick = { showAddSubjectMenu = !showAddSubjectMenu }) {
-                                                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-                                            }
-                                        },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable { showAddSubjectMenu = true },
-                                        shape = RoundedCornerShape(10.dp)
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "Official Student Information",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = Color(0xFF4C1D95)
                                     )
-
-                                    DropdownMenu(
-                                        expanded = showAddSubjectMenu,
-                                        onDismissRequest = { showAddSubjectMenu = false }
-                                    ) {
-                                        availableSubjects.forEach { newSubName ->
-                                            DropdownMenuItem(
-                                                text = { Text(newSubName) },
-                                                onClick = {
-                                                    selectedSubjectDropdown = newSubName
-                                                    showAddSubjectMenu = false
-                                                    if (editSubjectsList.none { it.subjectName == newSubName }) {
-                                                        val newMark = SubjectMark(
-                                                            subjectName = newSubName,
-                                                            marks = 0.0,
-                                                            maxMarks = 100.0,
-                                                            testDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date()),
-                                                            testType = "Monthly"
-                                                        )
-                                                        editSubjectsList = editSubjectsList + newMark
-                                                    }
-                                                }
-                                            )
-                                        }
-                                    }
+                                    Text(
+                                        text = "Registered and maintained by Tutor. Contact tutor for any updates.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFF6D28D9)
+                                    )
                                 }
                             }
                         }
 
-                        // Database Core Parameters Form
+                        // 1. Academic Details Card
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -1391,119 +1420,330 @@ fun ParentDashboard(
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Text(
-                                    text = "Core Registry Parameters (Database)",
+                                    text = "Academic Profile",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF1E1B4B)
                                 )
+                                HorizontalDivider(color = Color(0xFFF1F5F9))
 
-                                OutlinedTextField(
-                                    value = editName,
-                                    onValueChange = { editName = it },
-                                    label = { Text("Student Name") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-
-                                OutlinedTextField(
-                                    value = editPhone,
-                                    onValueChange = { editPhone = it },
-                                    label = { Text("Parent Mobile Phone") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-
-                                OutlinedTextField(
-                                    value = editFlatNo,
-                                    onValueChange = { editFlatNo = it },
-                                    label = { Text("Parent Flat Number") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    OutlinedTextField(
-                                        value = editClass,
-                                        onValueChange = { editClass = it },
-                                        label = { Text("Standard Class") },
-                                        modifier = Modifier.weight(1f),
-                                        shape = RoundedCornerShape(10.dp)
-                                    )
-
-                                    OutlinedTextField(
-                                        value = editBoard,
-                                        onValueChange = { editBoard = it },
-                                        label = { Text("Secondary Board") },
-                                        modifier = Modifier.weight(1f),
-                                        shape = RoundedCornerShape(10.dp)
-                                    )
-                                }
-
-                                OutlinedTextField(
-                                    value = editSchool,
-                                    onValueChange = { editSchool = it },
-                                    label = { Text("School Name") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-
-                                OutlinedTextField(
-                                    value = editEmail,
-                                    onValueChange = { editEmail = it },
-                                    label = { Text("Email Address") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                Button(
-                                    onClick = {
-                                        val updatedStudent = student.copy(
-                                            name = editName.ifEmpty { student.name },
-                                            parentPhone = editPhone,
-                                            parentFlatNo = editFlatNo,
-                                            standard = editClass,
-                                            board = editBoard,
-                                            school = editSchool,
-                                            studentEmail = editEmail
-                                        ).withSubjects(editSubjectsList)
-
-                                        viewModel.updateStudent(updatedStudent)
-                                        Toast.makeText(context, "Registry updated successfully!", Toast.LENGTH_SHORT).show()
-                                        activeSubViewTab = 0
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6200EE)),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    Icon(Icons.Default.Save, contentDescription = null)
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Save Registry", fontWeight = FontWeight.Bold)
-                                }
-
-                                OutlinedButton(
-                                    onClick = {
-                                        oldPasswordInput = ""
-                                        newPasswordInput = ""
-                                        confirmPasswordInput = ""
-                                        showChangePasswordDialog = true
-                                    },
-                                    modifier = Modifier.fillMaxWidth().testTag("change_password_profile_button"),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF423870)),
-                                    border = BorderStroke(1.dp, Color(0xFF7A68E6)),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFF7A68E6))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Change Parent Password", fontWeight = FontWeight.Bold)
+                                InfoRow(label = "Student Name", value = student.name)
+                                InfoRow(label = "Date of Birth", value = student.birthDate.ifEmpty { "N/A" })
+                                InfoRow(label = "Class / Standard", value = student.standard.ifEmpty { "N/A" })
+                                InfoRow(label = "Education Board", value = student.board.ifEmpty { "CBSE / ICSE / State" })
+                                InfoRow(label = "School", value = student.school.ifEmpty { "N/A" })
+                                if (student.studentEmail.isNotBlank()) {
+                                    InfoRow(label = "Student Email", value = student.studentEmail)
                                 }
                             }
+                        }
+
+                        // 2. Parent & Contact Details Card
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text(
+                                    text = "Parent & Contact Details",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1E1B4B)
+                                )
+                                HorizontalDivider(color = Color(0xFFF1F5F9))
+
+                                InfoRow(label = "Parent / Guardian", value = student.parentName.ifEmpty { "Parent" })
+                                InfoRow(label = "Contact Number", value = student.parentPhone.ifEmpty { "N/A" })
+                                InfoRow(label = "Residence Flat No.", value = student.parentFlatNo.ifEmpty { "N/A" })
+                            }
+                        }
+
+                        // 3. Enrolled Subjects & Marks Ledger Card
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Enrolled Subjects & Marks Ledger",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF1E1B4B)
+                                    )
+                                    if (subjects.isNotEmpty()) {
+                                        Text("${subjects.size} Subjects", fontSize = 11.sp, color = Color(0xFF7C3AED), fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                                HorizontalDivider(color = Color(0xFFF1F5F9))
+
+                                if (subjects.isEmpty()) {
+                                    Text("No specific subjects enrolled.", color = Color.Gray, fontSize = 13.sp)
+                                } else {
+                                    val expandedLedgerCardSubjects = remember { mutableStateMapOf<String, Boolean>() }
+
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text("Subject-wise Marks Visual (All Chosen Subjects):", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF32236F))
+                                            Text("${subjects.size} Subjects", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF7C3AED))
+                                        }
+
+                                        // Render individual dropdown for all subjects chosen by the student (Subject 1 dropdown, Subject 2 dropdown, etc.)
+                                        subjects.forEachIndexed { index, sm ->
+                                            val isExpanded = expandedLedgerCardSubjects[sm.subjectName] ?: true
+                                            val pct = if (sm.maxMarks > 0) ((sm.marks / sm.maxMarks) * 100).toInt() else 0
+                                            val statusColor = if (pct >= 80) Color(0xFF10B981) else if (pct >= 60) Color(0xFF7C3AED) else Color(0xFFF59E0B)
+
+                                            Card(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                colors = CardDefaults.cardColors(containerColor = Color.White),
+                                                border = BorderStroke(1.dp, if (isExpanded) Color(0xFFC7D2FE) else Color(0xFFEDE9FE)),
+                                                shape = RoundedCornerShape(10.dp)
+                                            ) {
+                                                Column(modifier = Modifier.fillMaxWidth()) {
+                                                    // Dropdown Header Row
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .background(if (isExpanded) Color(0xFFF5F3FF) else Color.White)
+                                                            .clickable { expandedLedgerCardSubjects[sm.subjectName] = !isExpanded }
+                                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .size(22.dp)
+                                                                    .clip(CircleShape)
+                                                                    .background(Color(0xFFEDE9FE)),
+                                                                contentAlignment = Alignment.Center
+                                                            ) {
+                                                                Text("${index + 1}", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF7C3AED))
+                                                            }
+                                                            Spacer(modifier = Modifier.width(8.dp))
+                                                            Column {
+                                                                Text(
+                                                                    text = "Subject ${index + 1}: ${sm.subjectName}",
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    fontSize = 13.sp,
+                                                                    color = Color(0xFF1E1B4B)
+                                                                )
+                                                                Text(
+                                                                    text = if (isExpanded) "Tap to collapse" else "Tap to view subject marks visual",
+                                                                    fontSize = 9.sp,
+                                                                    color = Color.Gray
+                                                                )
+                                                            }
+                                                        }
+                                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                                            Surface(
+                                                                shape = RoundedCornerShape(6.dp),
+                                                                color = statusColor.copy(alpha = 0.12f),
+                                                                modifier = Modifier.padding(end = 4.dp)
+                                                            ) {
+                                                                Text(
+                                                                    text = "${sm.marks.toInt()}/${sm.maxMarks.toInt()} ($pct%)",
+                                                                    fontSize = 10.sp,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    color = statusColor,
+                                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                                )
+                                                            }
+                                                            Icon(
+                                                                imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                                                contentDescription = "Toggle Dropdown",
+                                                                tint = Color(0xFF7C3AED),
+                                                                modifier = Modifier.size(20.dp)
+                                                            )
+                                                        }
+                                                    }
+
+                                                    // Dropdown Content
+                                                    if (isExpanded) {
+                                                        Column(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .padding(12.dp),
+                                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                                        ) {
+                                                            Row(
+                                                                modifier = Modifier.fillMaxWidth(),
+                                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                                verticalAlignment = Alignment.CenterVertically
+                                                            ) {
+                                                                Column {
+                                                                    Text("Marks Obtained", fontSize = 10.sp, color = Color.Gray)
+                                                                    Row(verticalAlignment = Alignment.Bottom) {
+                                                                        Text(
+                                                                            text = "${sm.marks.toInt()}",
+                                                                            fontSize = 20.sp,
+                                                                            fontWeight = FontWeight.Black,
+                                                                            color = Color(0xFF1E1B4B)
+                                                                        )
+                                                                        Text(
+                                                                            text = " / ${sm.maxMarks.toInt()}",
+                                                                            fontSize = 12.sp,
+                                                                            fontWeight = FontWeight.Bold,
+                                                                            color = Color.Gray,
+                                                                            modifier = Modifier.padding(bottom = 1.dp, start = 2.dp)
+                                                                        )
+                                                                    }
+                                                                }
+
+                                                                Column(horizontalAlignment = Alignment.End) {
+                                                                    val gradeTag = if (pct >= 90) "A+ Outstanding" else if (pct >= 75) "A Excellent" else if (pct >= 60) "B Good" else "Needs Improvement"
+                                                                    Surface(
+                                                                        shape = RoundedCornerShape(6.dp),
+                                                                        color = statusColor.copy(alpha = 0.15f)
+                                                                    ) {
+                                                                        Text(
+                                                                            text = gradeTag,
+                                                                            fontSize = 10.sp,
+                                                                            fontWeight = FontWeight.Bold,
+                                                                            color = statusColor,
+                                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                                                        )
+                                                                    }
+                                                                    Text("Accuracy: $pct%", fontSize = 10.sp, color = Color.Gray, modifier = Modifier.padding(top = 1.dp))
+                                                                }
+                                                            }
+
+                                                            LinearProgressIndicator(
+                                                                progress = (pct / 100f).coerceIn(0f, 1f),
+                                                                modifier = Modifier
+                                                                    .fillMaxWidth()
+                                                                    .height(6.dp)
+                                                                    .clip(RoundedCornerShape(3.dp)),
+                                                                color = statusColor,
+                                                                trackColor = Color(0xFFF1F5F9)
+                                                            )
+
+                                                            Row(
+                                                                modifier = Modifier
+                                                                    .fillMaxWidth()
+                                                                    .background(Color(0xFFF8FAFC), RoundedCornerShape(6.dp))
+                                                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                                                horizontalArrangement = Arrangement.SpaceBetween
+                                                            ) {
+                                                                Text("Status: Recorded", fontSize = 10.sp, color = Color(0xFF475569))
+                                                                Text("Verified Evaluation", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Color(0xFF10B981))
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+
+
+                        // 4. Tuition Fee Ledger Card
+                        val isLedgerFeeCleared = student.isFeesPaid || student.dueAmount <= 0.0
+                        val feeLedgerContainer = if (isLedgerFeeCleared) Color(0xFFF0FDF4) else Color(0xFFFEF2F2)
+                        val feeLedgerBorder = if (isLedgerFeeCleared) Color(0xFF86EFAC) else Color(0xFFFCA5A5)
+                        val feeLedgerHighlight = if (isLedgerFeeCleared) Color(0xFF15803D) else Color(0xFFB91C1C)
+
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = feeLedgerContainer),
+                            border = BorderStroke(1.5.dp, feeLedgerBorder),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Tuition Fee Summary",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF1E1B4B)
+                                    )
+                                    Surface(
+                                        color = if (isLedgerFeeCleared) Color(0xFFDCFCE7) else Color(0xFFFEE2E2),
+                                        border = BorderStroke(1.dp, feeLedgerBorder),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isLedgerFeeCleared) Icons.Default.CheckCircle else Icons.Default.Warning,
+                                                contentDescription = null,
+                                                tint = feeLedgerHighlight,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = if (isLedgerFeeCleared) "CLEARED" else "UNPAID",
+                                                color = feeLedgerHighlight,
+                                                fontWeight = FontWeight.Black,
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                    }
+                                }
+                                HorizontalDivider(color = if (isLedgerFeeCleared) Color(0xFFDCFCE7) else Color(0xFFFEE2E2))
+
+                                InfoRow(label = "Monthly Tuition Fee", value = "₹${student.tuitionFee.toInt()}")
+                                InfoRow(
+                                    label = "Current Outstanding Due",
+                                    value = if (isLedgerFeeCleared) "₹0 (Cleared)" else "₹${student.dueAmount.toInt()}"
+                                )
+                                InfoRow(
+                                    label = "Payment Status",
+                                    value = if (isLedgerFeeCleared) "Cleared ✓" else "Unpaid (Due: ₹${student.dueAmount.toInt()})"
+                                )
+                            }
+                        }
+
+                        // Security & Account Settings
+                        OutlinedButton(
+                            onClick = {
+                                oldPasswordInput = ""
+                                newPasswordInput = ""
+                                confirmPasswordInput = ""
+                                showChangePasswordDialog = true
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp)
+                                .testTag("change_password_profile_button"),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF423870)),
+                            border = BorderStroke(1.dp, Color(0xFF7A68E6)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFF7A68E6))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Change Parent Login Password", fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -1511,6 +1751,129 @@ fun ParentDashboard(
 
             Spacer(modifier = Modifier.height(30.dp))
         }
+    }
+
+    // Marksheet Paper Preview Dialog
+    if (previewPaperUrl != null) {
+        AlertDialog(
+            onDismissRequest = { previewPaperUrl = null },
+            title = {
+                Text(
+                    text = previewPaperTitle.ifEmpty { "Marksheet Evaluation Paper" },
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(350.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFFF8FAFC)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AsyncImage(
+                        model = previewPaperUrl,
+                        contentDescription = "Marksheet Photo",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { previewPaperUrl = null },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6D28D9))
+                ) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+
+    // Test Paper SMS Query Dialog
+    if (querySelectedPaper != null) {
+        val paper = querySelectedPaper!!
+        AlertDialog(
+            onDismissRequest = { querySelectedPaper = null },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.QuestionAnswer, contentDescription = null, tint = Color(0xFF4F46E5), modifier = Modifier.size(22.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Query on ${paper.subjectName}",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "Direct SMS will be automatically sent to Tutor (9986736360).",
+                        fontSize = 12.sp,
+                        color = Color.Gray
+                    )
+
+                    // Quick option chips
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        SuggestionChip(
+                            onClick = { queryText = "Please review my child's test evaluation marks." },
+                            label = { Text("Review Marks", fontSize = 11.sp) }
+                        )
+                        SuggestionChip(
+                            onClick = { queryText = "Requesting clarification on question correction." },
+                            label = { Text("Correction Doubt", fontSize = 11.sp) }
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = queryText,
+                        onValueChange = { queryText = it },
+                        label = { Text("Describe your query / doubt") },
+                        placeholder = { Text("e.g., Request re-evaluating section B marks...") },
+                        modifier = Modifier.fillMaxWidth().height(120.dp),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (queryText.trim().isEmpty()) {
+                            Toast.makeText(context, "Please enter your query before sending", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+                        viewModel.sendTestPaperQuerySms(
+                            context = context,
+                            tutorPhone = "9986736360",
+                            studentName = student.name,
+                            subject = paper.subjectName,
+                            queryText = queryText.trim()
+                        )
+                        querySelectedPaper = null
+                        queryText = ""
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4F46E5)),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Send SMS to Tutor")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { querySelectedPaper = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     // Logout Confirmation Dialog
@@ -1709,26 +2072,321 @@ fun ParentDashboard(
     }
 }
 
+// COMPOSABLE HELPER: Simple read-only key-value information row
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.Gray
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = Color(0xFF1E1B4B)
+        )
+    }
+}
+
+// COMPOSABLE COMPONENT: Attendance Monthly Calendar for Parent Dashboard
+@Composable
+fun ParentAttendanceCalendar(
+    attendance: Map<String, Boolean>,
+    modifier: Modifier = Modifier
+) {
+    var calendarMonthOffset by remember { mutableStateOf(0) }
+    val baseCal = remember(calendarMonthOffset) {
+        val cal = Calendar.getInstance()
+        cal.add(Calendar.MONTH, calendarMonthOffset)
+        cal
+    }
+
+    val currentYear = baseCal.get(Calendar.YEAR)
+    val currentMonth = baseCal.get(Calendar.MONTH) // 0-based
+    val monthName = remember(baseCal) {
+        SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(baseCal.time)
+    }
+
+    val daysInMonth = remember(baseCal) {
+        val cal = Calendar.getInstance()
+        cal.set(Calendar.YEAR, currentYear)
+        cal.set(Calendar.MONTH, currentMonth)
+        cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+    }
+
+    val firstDayOfWeek = remember(baseCal) {
+        val cal = Calendar.getInstance()
+        cal.set(Calendar.YEAR, currentYear)
+        cal.set(Calendar.MONTH, currentMonth)
+        cal.set(Calendar.DAY_OF_MONTH, 1)
+        cal.get(Calendar.DAY_OF_WEEK) - 1 // 0 for Sunday
+    }
+
+    var selectedDateKey by remember { mutableStateOf<String?>(null) }
+
+    val monthPresentCount = remember(attendance, currentYear, currentMonth) {
+        val prefix = String.format(Locale.getDefault(), "%04d-%02d", currentYear, currentMonth + 1)
+        attendance.entries.count { it.key.startsWith(prefix) && it.value }
+    }
+    val monthAbsentCount = remember(attendance, currentYear, currentMonth) {
+        val prefix = String.format(Locale.getDefault(), "%04d-%02d", currentYear, currentMonth + 1)
+        attendance.entries.count { it.key.startsWith(prefix) && !it.value }
+    }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, Color(0xFFECE6FF))
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Month Header with Prev/Next
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = { calendarMonthOffset -= 1 },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                        contentDescription = "Previous Month",
+                        tint = Color(0xFF6D28D9)
+                    )
+                }
+
+                Text(
+                    text = monthName,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF32236F)
+                )
+
+                IconButton(
+                    onClick = { calendarMonthOffset += 1 },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = "Next Month",
+                        tint = Color(0xFF6D28D9)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Day of week headers
+            val daysOfWeek = listOf("Su", "Mo", "Tu", "We", "Th", "Fr", "Sa")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                daysOfWeek.forEach { d ->
+                    Text(
+                        text = d,
+                        modifier = Modifier.weight(1f),
+                        textAlign = TextAlign.Center,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = Color.Gray
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Days Grid
+            val totalCells = firstDayOfWeek + daysInMonth
+            val rows = (totalCells + 6) / 7
+
+            for (r in 0 until rows) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 3.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    for (c in 0..6) {
+                        val cellIndex = r * 7 + c
+                        val dayNum = cellIndex - firstDayOfWeek + 1
+                        if (dayNum in 1..daysInMonth) {
+                            val dateKey = String.format(Locale.getDefault(), "%04d-%02d-%02d", currentYear, currentMonth + 1, dayNum)
+                            val attStatus = attendance[dateKey]
+                            val isSelected = selectedDateKey == dateKey
+
+                            val (bg, textColor) = when (attStatus) {
+                                true -> Color(0xFF10B981) to Color.White
+                                false -> Color(0xFFEF4444) to Color.White
+                                null -> if (isSelected) Color(0xFFEDE9FE) to Color(0xFF6D28D9) else Color.Transparent to Color.DarkGray
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .aspectRatio(1f)
+                                    .padding(2.dp)
+                                    .clip(CircleShape)
+                                    .background(bg)
+                                    .then(
+                                        if (isSelected && attStatus != null) Modifier.border(2.dp, Color(0xFF4338CA), CircleShape)
+                                        else Modifier
+                                    )
+                                    .clickable { selectedDateKey = dateKey },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "$dayNum",
+                                    fontSize = 12.sp,
+                                    fontWeight = if (attStatus != null || isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = textColor
+                                )
+                            }
+                        } else {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Calendar Legend & Stats Bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFFFAF9FF), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(Color(0xFF10B981)))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Present ($monthPresentCount)", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF065F46))
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(Color(0xFFEF4444)))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Absent ($monthAbsentCount)", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF991B1B))
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(Color.LightGray))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("No Class", fontSize = 11.sp, color = Color.Gray)
+                }
+            }
+
+            // Selected date inspection card
+            if (selectedDateKey != null) {
+                val dateKey = selectedDateKey!!
+                val status = attendance[dateKey]
+                Spacer(modifier = Modifier.height(10.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = when (status) {
+                            true -> Color(0xFFECFDF5)
+                            false -> Color(0xFFFEF2F2)
+                            null -> Color(0xFFF8FAFC)
+                        }
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Date: $dateKey",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = Color(0xFF1E1B4B)
+                        )
+                        val (statusLabel, statusColor) = when (status) {
+                            true -> "Present ✅" to Color(0xFF10B981)
+                            false -> "Absent ❌" to Color(0xFFEF4444)
+                            null -> "No class recorded" to Color.Gray
+                        }
+                        Text(
+                            text = statusLabel,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = statusColor
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 // COMPOSABLE COMPONENT: Performance Marks Line Chart for Parent Dashboard
 @Composable
-private fun ParentPerformanceMarksLineChart(subjects: List<SubjectMark>) {
-    val subjectNames = remember(subjects) {
-        subjects.map { it.subjectName }.distinct().ifEmpty { listOf("Physics", "Mathematics") }
+private fun ParentPerformanceMarksLineChart(
+    subjects: List<SubjectMark>,
+    testPapers: List<TestPaper>
+) {
+    val subjectNames = remember(subjects, testPapers) {
+        val sNames = subjects.map { it.subjectName.trim() }
+        val tpNames = testPapers.map { it.subjectName.trim() }
+        (sNames + tpNames).filter { it.isNotBlank() }.distinct()
+    }
+
+    if (subjectNames.isEmpty()) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = BorderStroke(1.dp, Color(0xFFECE6FF))
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(32.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "No test marks recorded yet.",
+                    color = Color.Gray,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+        return
     }
 
     var selectedChartSubject by remember(subjectNames) {
         mutableStateOf(subjectNames.first())
     }
 
-    val filteredScores = remember(subjects, selectedChartSubject) {
-        subjects.filter { it.subjectName.equals(selectedChartSubject, ignoreCase = true) }
-            .ifEmpty {
-                listOf(
-                    SubjectMark(selectedChartSubject, 0.0, 100.0, "15-07-2026", "Monthly"),
-                    SubjectMark(selectedChartSubject, 20.0, 100.0, "2026-07-23", "Unit Test"),
-                    SubjectMark(selectedChartSubject, 30.0, 100.0, "2026-07-26", "Unit Test")
+    val filteredScores = remember(subjects, testPapers, selectedChartSubject) {
+        val sList = subjects.filter { it.subjectName.equals(selectedChartSubject, ignoreCase = true) }
+        val tpList = testPapers.filter { it.subjectName.equals(selectedChartSubject, ignoreCase = true) && it.marksObtained != null && it.totalMarks != null }
+            .map { tp ->
+                SubjectMark(
+                    subjectName = tp.subjectName,
+                    marks = tp.marksObtained!!,
+                    maxMarks = tp.totalMarks!!,
+                    testDate = tp.testDate,
+                    testType = "Paper"
                 )
             }
+        (sList + tpList).distinctBy { "${it.testDate}_${it.marks}_${it.maxMarks}" }
     }
 
     val avgAccuracy = remember(filteredScores) {
@@ -1800,75 +2458,223 @@ private fun ParentPerformanceMarksLineChart(subjects: List<SubjectMark>) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Canvas Line Chart
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(140.dp)
-            ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val width = size.width
-                    val height = size.height
+            if (filteredScores.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(120.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "No test marks recorded for $selectedChartSubject yet.",
+                        color = Color.Gray,
+                        fontSize = 12.sp
+                    )
+                }
+            } else {
+                // Canvas Line Chart
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(140.dp)
+                ) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val width = size.width
+                        val height = size.height
 
-                    // Draw grid lines
-                    val gridColor = Color(0xFFF1F5F9)
-                    for (i in 0..3) {
-                        val y = height * (i / 3f)
-                        drawLine(
-                            color = gridColor,
-                            start = Offset(0f, y),
-                            end = Offset(width, y),
-                            strokeWidth = 1.dp.toPx()
-                        )
-                    }
-
-                    if (filteredScores.size >= 2) {
-                        val points = filteredScores.mapIndexed { idx, score ->
-                            val x = width * (idx.toFloat() / (filteredScores.size - 1).coerceAtLeast(1))
-                            val pct = if (score.maxMarks > 0) (score.marks / score.maxMarks).toFloat() else 0f
-                            val y = height * (1f - pct.coerceIn(0f, 1f))
-                            Offset(x, y)
-                        }
-
-                        // Draw lines
-                        for (i in 0 until points.size - 1) {
+                        // Draw grid lines
+                        val gridColor = Color(0xFFF1F5F9)
+                        for (i in 0..3) {
+                            val y = height * (i / 3f)
                             drawLine(
-                                color = Color(0xFF7C3AED),
-                                start = points[i],
-                                end = points[i + 1],
-                                strokeWidth = 3.dp.toPx()
+                                color = gridColor,
+                                start = Offset(0f, y),
+                                end = Offset(width, y),
+                                strokeWidth = 1.dp.toPx()
                             )
                         }
 
-                        // Draw points
-                        points.forEach { point ->
+                        if (filteredScores.size >= 2) {
+                            val points = filteredScores.mapIndexed { idx, score ->
+                                val x = width * (idx.toFloat() / (filteredScores.size - 1).coerceAtLeast(1))
+                                val pct = if (score.maxMarks > 0) (score.marks / score.maxMarks).toFloat() else 0f
+                                val y = height * (1f - pct.coerceIn(0f, 1f))
+                                Offset(x, y)
+                            }
+
+                            // Draw lines
+                            for (i in 0 until points.size - 1) {
+                                drawLine(
+                                    color = Color(0xFF7C3AED),
+                                    start = points[i],
+                                    end = points[i + 1],
+                                    strokeWidth = 3.dp.toPx()
+                                )
+                            }
+
+                            // Draw points and marks badges
+                            points.forEachIndexed { idx, point ->
+                                val score = filteredScores[idx]
+
+                                drawCircle(
+                                    color = Color(0x337C3AED),
+                                    radius = 10.dp.toPx(),
+                                    center = point
+                                )
+                                drawCircle(
+                                    color = Color.White,
+                                    radius = 6.dp.toPx(),
+                                    center = point
+                                )
+                                drawCircle(
+                                    color = Color(0xFF7C3AED),
+                                    radius = 4.dp.toPx(),
+                                    center = point
+                                )
+
+                                // Draw marks badge
+                                drawIntoCanvas { canvas ->
+                                    val marksText = if (score.marks % 1.0 == 0.0 && score.maxMarks % 1.0 == 0.0) {
+                                        "${score.marks.toInt()}/${score.maxMarks.toInt()}"
+                                    } else {
+                                        "${score.marks}/${score.maxMarks}"
+                                    }
+
+                                    val textPaint = Paint().apply {
+                                        color = android.graphics.Color.WHITE
+                                        textSize = 9.5f * density
+                                        typeface = Typeface.DEFAULT_BOLD
+                                        isAntiAlias = true
+                                        textAlign = Paint.Align.CENTER
+                                    }
+
+                                    val bgPaint = Paint().apply {
+                                        color = android.graphics.Color.parseColor("#4C1D95")
+                                        isAntiAlias = true
+                                        style = Paint.Style.FILL
+                                    }
+
+                                    val borderPaint = Paint().apply {
+                                        color = android.graphics.Color.WHITE
+                                        isAntiAlias = true
+                                        style = Paint.Style.STROKE
+                                        strokeWidth = 1.2f * density
+                                    }
+
+                                    val textBounds = android.graphics.Rect()
+                                    textPaint.getTextBounds(marksText, 0, marksText.length, textBounds)
+                                    val textWidth = textBounds.width().toFloat()
+                                    val textHeight = textBounds.height().toFloat()
+
+                                    val padH = 5f * density
+                                    val padV = 2.5f * density
+
+                                    val badgeCenterY = if (point.y < 28f * density) point.y + 15f * density else point.y - 12f * density
+                                    val rectLeft = (point.x - textWidth / 2f - padH).coerceIn(2f * density, size.width - textWidth - padH * 2 - 2f * density)
+                                    val rectRight = rectLeft + textWidth + padH * 2
+                                    val rectTop = badgeCenterY - textHeight / 2f - padV
+                                    val rectBottom = badgeCenterY + textHeight / 2f + padV
+                                    val rectF = RectF(rectLeft, rectTop, rectRight, rectBottom)
+
+                                    val cornerRadius = 5f * density
+                                    canvas.nativeCanvas.drawRoundRect(rectF, cornerRadius, cornerRadius, bgPaint)
+                                    canvas.nativeCanvas.drawRoundRect(rectF, cornerRadius, cornerRadius, borderPaint)
+
+                                    val textBaseline = rectTop + padV + textHeight - textBounds.bottom
+                                    val textCenterX = (rectLeft + rectRight) / 2f
+                                    canvas.nativeCanvas.drawText(marksText, textCenterX, textBaseline, textPaint)
+                                }
+                            }
+                        } else if (filteredScores.size == 1) {
+                            val score = filteredScores.first()
+                            val pct = if (score.maxMarks > 0) (score.marks / score.maxMarks).toFloat() else 0f
+                            val center = Offset(width / 2f, height * (1f - pct.coerceIn(0f, 1f)))
+
+                            drawCircle(
+                                color = Color(0x337C3AED),
+                                radius = 10.dp.toPx(),
+                                center = center
+                            )
                             drawCircle(
                                 color = Color.White,
                                 radius = 6.dp.toPx(),
-                                center = point
+                                center = center
                             )
                             drawCircle(
                                 color = Color(0xFF7C3AED),
                                 radius = 4.dp.toPx(),
-                                center = point
+                                center = center
                             )
+
+                            // Draw marks badge for single score
+                            drawIntoCanvas { canvas ->
+                                val marksText = if (score.marks % 1.0 == 0.0 && score.maxMarks % 1.0 == 0.0) {
+                                    "${score.marks.toInt()}/${score.maxMarks.toInt()}"
+                                } else {
+                                    "${score.marks}/${score.maxMarks}"
+                                }
+
+                                val textPaint = Paint().apply {
+                                    color = android.graphics.Color.WHITE
+                                    textSize = 9.5f * density
+                                    typeface = Typeface.DEFAULT_BOLD
+                                    isAntiAlias = true
+                                    textAlign = Paint.Align.CENTER
+                                }
+
+                                val bgPaint = Paint().apply {
+                                    color = android.graphics.Color.parseColor("#4C1D95")
+                                    isAntiAlias = true
+                                    style = Paint.Style.FILL
+                                }
+
+                                val borderPaint = Paint().apply {
+                                    color = android.graphics.Color.WHITE
+                                    isAntiAlias = true
+                                    style = Paint.Style.STROKE
+                                    strokeWidth = 1.2f * density
+                                }
+
+                                val textBounds = android.graphics.Rect()
+                                textPaint.getTextBounds(marksText, 0, marksText.length, textBounds)
+                                val textWidth = textBounds.width().toFloat()
+                                val textHeight = textBounds.height().toFloat()
+
+                                val padH = 5f * density
+                                val padV = 2.5f * density
+
+                                val badgeCenterY = if (center.y < 28f * density) center.y + 15f * density else center.y - 12f * density
+                                val rectLeft = (center.x - textWidth / 2f - padH).coerceIn(2f * density, size.width - textWidth - padH * 2 - 2f * density)
+                                val rectRight = rectLeft + textWidth + padH * 2
+                                val rectTop = badgeCenterY - textHeight / 2f - padV
+                                val rectBottom = badgeCenterY + textHeight / 2f + padV
+                                val rectF = RectF(rectLeft, rectTop, rectRight, rectBottom)
+
+                                val cornerRadius = 5f * density
+                                canvas.nativeCanvas.drawRoundRect(rectF, cornerRadius, cornerRadius, bgPaint)
+                                canvas.nativeCanvas.drawRoundRect(rectF, cornerRadius, cornerRadius, borderPaint)
+
+                                val textBaseline = rectTop + padV + textHeight - textBounds.bottom
+                                val textCenterX = (rectLeft + rectRight) / 2f
+                                canvas.nativeCanvas.drawText(marksText, textCenterX, textBaseline, textPaint)
+                            }
                         }
                     }
                 }
-            }
 
-            // Dates Label Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                filteredScores.forEach { score ->
-                    val displayDate = score.testDate.takeLast(5).ifEmpty { "07-23" }
-                    Text(
-                        text = displayDate,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.Gray
-                    )
+                // Dates Label Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    filteredScores.forEach { score ->
+                        val displayDate = if (score.testDate.contains("-")) score.testDate.takeLast(5) else score.testDate
+                        Text(
+                            text = displayDate.ifEmpty { "Test" },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.Gray
+                        )
+                    }
                 }
             }
         }
@@ -1877,7 +2683,7 @@ private fun ParentPerformanceMarksLineChart(subjects: List<SubjectMark>) {
 
 // COMPOSABLE COMPONENT: Attendance Donut Chart for Parent Dashboard
 @Composable
-private fun ParentAttendanceDonutChart(pct: Float, presentDays: Int) {
+private fun ParentAttendanceDonutChart(pct: Float, presentDays: Int, daysInMonth: Int = 30) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -1933,7 +2739,7 @@ private fun ParentAttendanceDonutChart(pct: Float, presentDays: Int) {
                         color = Color(0xFF10B981)
                     )
                     Text(
-                        text = "$presentDays Days",
+                        text = "$presentDays / $daysInMonth Days Present",
                         fontSize = 11.sp,
                         color = Color.Gray
                     )
