@@ -482,7 +482,7 @@ fun LoginScreen(
                                                         onError = { err -> errorMessage = err }
                                                     )
                                                 } else {
-                                                    errorMessage = "Incorrect tutor password. Enter 071014 for Live backend or 123456 for Test mode."
+                                                    errorMessage = "Incorrect tutor password."
                                                 }
                                             },
                                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFCEB1FC)),

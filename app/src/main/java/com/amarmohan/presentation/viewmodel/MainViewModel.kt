@@ -1132,7 +1132,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
             }
 
             if (!isPasswordValid) {
-                onError("Incorrect password. The default password is your student's name.")
+                onError("Incorrect password.")
                 return@launch
             }
 
