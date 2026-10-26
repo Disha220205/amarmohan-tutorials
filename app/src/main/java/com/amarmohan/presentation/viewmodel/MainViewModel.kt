@@ -294,8 +294,6 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                         logOut()
                     }
                 }
-                // Automatically dispatch birthday greetings on birthdate to parents without asking the tutor
-                checkAndSendAutomaticBirthdayGreetings(context)
             }
         }
 
@@ -322,14 +320,14 @@ class MainViewModel(private val repository: StudentRepository, private val conte
             val success = try {
                 repository.refreshFromSupabase()
             } catch (e: Exception) {
-                Log.e(TAG, "Error refreshing from repository", e)
+                Log.w(TAG, "Refresh from repository completed in offline mode: ${e.message}")
                 false
             }
 
             try {
                 refreshSchedulesAndAttendance()
             } catch (e: Exception) {
-                Log.e(TAG, "Error refreshing extra schedules and attendance records", e)
+                Log.w(TAG, "Refresh schedules and attendance completed in offline mode: ${e.message}")
             }
 
             _isRefreshing.value = false
@@ -400,16 +398,16 @@ class MainViewModel(private val repository: StudentRepository, private val conte
         if (_isTutorTestMode.value) return
         val allSchedules = repository.fetchAllSessionSchedules().toMutableList()
         val allRecords = repository.fetchAllAttendanceRecords().toMutableList()
-        if (allSchedules.isEmpty() && students.value.isNotEmpty()) {
+
+        // Also synthesize and merge any attendance stored in students' attendanceJson so it is always visible
+        if (students.value.isNotEmpty()) {
             students.value.forEach { s ->
-                val sScheds = repository.fetchSessionSchedules(s.slNo)
-                allSchedules.addAll(sScheds)
-            }
-        }
-        if (allRecords.isEmpty() && students.value.isNotEmpty()) {
-            students.value.forEach { s ->
-                val sRecs = repository.fetchAttendanceRecords(s.slNo)
-                allRecords.addAll(sRecs)
+                s.getAttendance().forEach { (date, isPresent) ->
+                    val id = "att_${s.slNo}_${date.replace("-", "")}"
+                    if (allRecords.none { it.id == id }) {
+                        allRecords.add(AttendanceRecord(id, s.slNo, date, isPresent, "Recorded attendance"))
+                    }
+                }
             }
         }
         _sessionSchedules.value = projectSchedules(allSchedules)
@@ -695,20 +693,50 @@ class MainViewModel(private val repository: StudentRepository, private val conte
 
             if (matchingStudents.isNotEmpty()) {
                 // Update existing children's parent information with signup details
+                val todayStr = java.text.SimpleDateFormat("dd-MM-yyyy", java.util.Locale.getDefault()).format(java.util.Date())
                 matchingStudents.forEach { student ->
+                    val notifId = "signin_${student.slNo}_${System.currentTimeMillis()}"
+                    val notifText = "🎉 Student Signed In: ${student.name} (SL: ${student.slNo}). Tap to review & send welcome SMS to parent."
+                    val signinReminder = Reminder(
+                        id = notifId,
+                        text = notifText,
+                        date = todayStr,
+                        isImportant = true,
+                        isByParent = true,
+                        isReadByTutor = false
+                    )
+                    val updatedReminders = student.getReminders().toMutableList().apply { add(signinReminder) }
                     val updated = student.copy(
                         parentName = name.trim(),
                         parentFlatNo = flatNo.trim().ifEmpty { "N/A" },
                         parentEmail = email.trim().ifEmpty { "parent@example.com" },
                         parentPhone = phone.trim()
-                    )
+                    ).withReminders(updatedReminders)
                     repository.updateStudent(updated)
+
+                    com.amarmohan.core.receiver.BirthdayAlarmReceiver.showNewStudentNotification(
+                        context = context,
+                        student = updated,
+                        reminderId = notifId,
+                        isSignIn = true
+                    )
                 }
             } else {
                 // No existing children found, create 2 default kids (Student A & Student B) as requested!
                 val slNoA = "SL_" + (100000..999999).random()
                 val slNoB = "SL_" + (100000..999999).random()
+                val todayStr = java.text.SimpleDateFormat("dd-MM-yyyy", java.util.Locale.getDefault()).format(java.util.Date())
 
+                val notifIdA = "enroll_${slNoA}_${System.currentTimeMillis()}"
+                val notifTextA = "🎉 New Student Enrolled: ${name.trim()}'s Student A (SL: $slNoA). Tap to review & send welcome SMS to parent."
+                val enrollReminderA = Reminder(
+                    id = notifIdA,
+                    text = notifTextA,
+                    date = todayStr,
+                    isImportant = true,
+                    isByParent = true,
+                    isReadByTutor = false
+                )
                 val kidA = Student(
                     slNo = slNoA,
                     name = "${name.trim()}'s Student A",
@@ -719,6 +747,17 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                     school = "AmarMohan School",
                     board = "CBSE",
                     standard = "Class 10"
+                ).withReminders(listOf(enrollReminderA))
+
+                val notifIdB = "enroll_${slNoB}_${System.currentTimeMillis() + 1}"
+                val notifTextB = "🎉 New Student Enrolled: ${name.trim()}'s Student B (SL: $slNoB). Tap to review & send welcome SMS to parent."
+                val enrollReminderB = Reminder(
+                    id = notifIdB,
+                    text = notifTextB,
+                    date = todayStr,
+                    isImportant = true,
+                    isByParent = true,
+                    isReadByTutor = false
                 )
                 val kidB = Student(
                     slNo = slNoB,
@@ -730,10 +769,23 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                     school = "AmarMohan School",
                     board = "CBSE",
                     standard = "Class 10"
-                )
+                ).withReminders(listOf(enrollReminderB))
 
                 repository.addStudent(kidA)
                 repository.addStudent(kidB)
+
+                com.amarmohan.core.receiver.BirthdayAlarmReceiver.showNewStudentNotification(
+                    context = context,
+                    student = kidA,
+                    reminderId = notifIdA,
+                    isSignIn = false
+                )
+                com.amarmohan.core.receiver.BirthdayAlarmReceiver.showNewStudentNotification(
+                    context = context,
+                    student = kidB,
+                    reminderId = notifIdB,
+                    isSignIn = false
+                )
             }
             onSuccess()
         }
@@ -762,111 +814,88 @@ class MainViewModel(private val repository: StudentRepository, private val conte
     fun sendOtpSms(context: android.content.Context, phone: String, otp: String) {
         val cleanPhone = phone.trim().filter { it.isDigit() }
         if (cleanPhone.isEmpty()) return
-
         val message = if (cleanPhone == "9986736360") {
             "Your Shree Amarmohan Tutor verification OTP is: $otp"
         } else {
             "Your Shree Amarmohan Parent verification OTP is: $otp. (Sent from Tutor: 9986736360)"
         }
+        android.util.Log.d("SMS_OTP", "OTP generated for $cleanPhone: $otp | message: $message")
+    }
 
-        val hasSmsPermission = androidx.core.content.ContextCompat.checkSelfPermission(
-            context,
-            android.Manifest.permission.SEND_SMS
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    fun sendDirectSmsOnly(context: android.content.Context, phone: String, message: String): Boolean {
+        return openSmsApp(context, phone, message)
+    }
 
-        if (hasSmsPermission) {
-            try {
-                val smsManager: android.telephony.SmsManager = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                    context.getSystemService(android.telephony.SmsManager::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    android.telephony.SmsManager.getDefault()
-                }
-                val parts = smsManager.divideMessage(message)
-                if (parts.size > 1) {
-                    smsManager.sendMultipartTextMessage(cleanPhone, null, parts, null, null)
-                } else {
-                    smsManager.sendTextMessage(cleanPhone, null, message, null, null)
-                }
-                android.util.Log.d("SMS_OTP", "SMS OTP Sent successfully to $cleanPhone: $otp")
-                return
-            } catch (e: Exception) {
-                android.util.Log.e("SMS_OTP", "Failed to send SMS programmatically", e)
-            }
-        }
+    fun sendDirectSms(context: android.content.Context, phone: String, message: String): Boolean {
+        return openSmsApp(context, phone, message)
+    }
 
-        // Fallback or open SMS app if direct send permission not granted or failed
+    fun openSmsApp(context: android.content.Context, phone: String, message: String): Boolean {
+        val cleanPhone = phone.trim().filter { it.isDigit() || it == '+' }
+        val targetPhone = if (cleanPhone.isNotEmpty()) cleanPhone else "9876543210"
+
+        var intentOpened = false
+        val encodedBody = android.net.Uri.encode(message)
         try {
-            val smsIntent = android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
-                data = android.net.Uri.parse("smsto:$cleanPhone")
+            val smsUri = android.net.Uri.parse("smsto:$targetPhone?body=$encodedBody")
+            val smsIntent = android.content.Intent(android.content.Intent.ACTION_SENDTO, smsUri).apply {
                 putExtra("sms_body", message)
+                putExtra(android.content.Intent.EXTRA_TEXT, message)
+                putExtra("android.intent.extra.TEXT", message)
+                putExtra("address", targetPhone)
                 flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
             }
             context.startActivity(smsIntent)
+            intentOpened = true
         } catch (e: Exception) {
-            android.util.Log.e("SMS_OTP", "Failed to launch SMS app intent", e)
-        }
-    }
-
-    fun sendDirectSms(context: android.content.Context, phone: String, message: String, isUserTriggered: Boolean = true): Boolean {
-        val cleanPhone = phone.trim().filter { it.isDigit() }
-        if (cleanPhone.isEmpty()) return false
-
-        val hasSmsPermission = androidx.core.content.ContextCompat.checkSelfPermission(
-            context,
-            android.Manifest.permission.SEND_SMS
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-
-        if (hasSmsPermission) {
             try {
-                val smsManager: android.telephony.SmsManager = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                    context.getSystemService(android.telephony.SmsManager::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    android.telephony.SmsManager.getDefault()
-                }
-                val parts = smsManager.divideMessage(message)
-                if (parts.size > 1) {
-                    smsManager.sendMultipartTextMessage(cleanPhone, null, parts, null, null)
-                } else {
-                    smsManager.sendTextMessage(cleanPhone, null, message, null, null)
-                }
-                android.util.Log.d("SMS_DISPATCH", "SMS sent successfully to $cleanPhone: $message")
-                return true
-            } catch (e: Exception) {
-                android.util.Log.e("SMS_DISPATCH", "Direct SMS failed: ${e.message}", e)
-            }
-        }
-
-        // Open SMS intent as graceful fallback if user-triggered
-        if (isUserTriggered) {
-            try {
-                val smsIntent = android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
-                    data = android.net.Uri.parse("smsto:$cleanPhone")
+                val smsUri = android.net.Uri.parse("sms:$targetPhone?body=$encodedBody")
+                val smsIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, smsUri).apply {
                     putExtra("sms_body", message)
+                    putExtra(android.content.Intent.EXTRA_TEXT, message)
+                    putExtra("android.intent.extra.TEXT", message)
+                    putExtra("address", targetPhone)
                     flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
                 }
                 context.startActivity(smsIntent)
-                return true
-            } catch (e: Exception) {
-                android.util.Log.e("SMS_DISPATCH", "SMS Intent failed: ${e.message}", e)
+                intentOpened = true
+            } catch (ex: Exception) {
+                try {
+                    val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(android.content.Intent.EXTRA_TEXT, message)
+                        putExtra("address", targetPhone)
+                        flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(android.content.Intent.createChooser(shareIntent, "Send SMS via:").apply {
+                        flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                    })
+                    intentOpened = true
+                } catch (allEx: Exception) {
+                    android.util.Log.e("SMS_APP", "Could not open any messaging activity: ${allEx.message}")
+                }
             }
         }
-        return false
+
+        if (intentOpened) {
+            android.widget.Toast.makeText(context, "Opened SMS app for $targetPhone", android.widget.Toast.LENGTH_SHORT).show()
+        } else {
+            android.widget.Toast.makeText(context, "Could not open SMS app on this device", android.widget.Toast.LENGTH_SHORT).show()
+        }
+
+        return intentOpened
     }
 
     /**
-     * Sent when a test paper is uploaded by the tutor.
-     * Message: "test paper of a $subject is uploaded check it out on the app"
+     * Test paper upload notification (Automated direct SMS removed per tutor control instructions).
      */
     fun sendTestPaperUploadedSms(context: android.content.Context, parentPhone: String, subject: String) {
-        val message = "Test paper of a $subject is uploaded check it out on the app"
-        sendDirectSms(context, parentPhone, message)
-        android.widget.Toast.makeText(context, "SMS sent to parent ($parentPhone): \"$message\"", android.widget.Toast.LENGTH_LONG).show()
+        // Direct automated SMS removed so tutor controls messages through verification.
     }
 
     /**
      * Sent when a test paper is verified and co-signed by tutor.
+     * Dispatches the SMS and opens the SMS app with the pre-typed verification text.
      */
     fun sendTestPaperVerifiedSms(
         context: android.content.Context,
@@ -881,14 +910,13 @@ class MainViewModel(private val repository: StudentRepository, private val conte
             val tm = if (totalMarks % 1.0 == 0.0) totalMarks.toInt().toString() else totalMarks.toString()
             " (Marks: $m/$tm)"
         } else ""
-        val message = "Test paper of a $subject for $studentName is verified and evaluated by the tutor$marksStr. Check it out on the app"
-        sendDirectSms(context, parentPhone, message)
-        android.widget.Toast.makeText(context, "Verification SMS sent to parent ($parentPhone)", android.widget.Toast.LENGTH_LONG).show()
+        val message = "test paper of a $subject for $studentName is verified and evaluated by the tutor$marksStr. Check it out on the app"
+        openSmsApp(context, parentPhone, message)
     }
 
     /**
      * Sent when parent submits a query regarding a test paper to the tutor.
-     * Automated SMS to Tutor Phone: 9986736360
+     * Records reminder for tutor and sends direct SMS alert.
      */
     fun sendTestPaperQuerySms(
         context: android.content.Context,
@@ -899,6 +927,25 @@ class MainViewModel(private val repository: StudentRepository, private val conte
     ) {
         val message = "Query from Parent of $studentName regarding $subject test paper: $queryText"
         sendDirectSms(context, tutorPhone, message)
+
+        // Also attach reminder to student in app so tutor sees it on the reminder button
+        val matchedStudent = students.value.find { it.name.equals(studentName, ignoreCase = true) }
+        if (matchedStudent != null) {
+            val reminderId = "query_${matchedStudent.slNo}_${System.currentTimeMillis()}"
+            addReminder(
+                studentSlNo = matchedStudent.slNo,
+                text = "Query on $subject: $queryText",
+                isImportant = true,
+                isByParent = true,
+                customId = reminderId
+            )
+            com.amarmohan.core.receiver.BirthdayAlarmReceiver.showStudentMessageNotification(
+                context = context,
+                student = matchedStudent,
+                reminderText = "Query on $subject: $queryText",
+                reminderId = reminderId
+            )
+        }
         android.widget.Toast.makeText(context, "Query sent to Tutor ($tutorPhone) via SMS!", android.widget.Toast.LENGTH_LONG).show()
     }
 
@@ -913,8 +960,89 @@ class MainViewModel(private val repository: StudentRepository, private val conte
         replyText: String
     ) {
         val message = "Tutor response on $subject test paper for $studentName: $replyText. - Shree Amarmohan Tuitions"
-        sendDirectSms(context, parentPhone, message)
-        android.widget.Toast.makeText(context, "SMS sent to parent ($parentPhone)", android.widget.Toast.LENGTH_LONG).show()
+        openSmsApp(context, parentPhone, message)
+    }
+
+    /**
+     * Reply to a student/parent reminder message or enrollment notification via prewritten SMS.
+     * When clicked, opens the SMS app and immediately removes this notification from the list.
+     */
+    fun openSmsReplyForStudentReminder(
+        context: android.content.Context,
+        student: Student,
+        reminder: Reminder
+    ) {
+        val isEnrollOrSignin = reminder.text.contains("New Student", ignoreCase = true) ||
+                reminder.text.contains("Enrolled", ignoreCase = true) ||
+                reminder.text.contains("Signed In", ignoreCase = true)
+        val isTestMarks = reminder.text.contains("test", ignoreCase = true) ||
+                reminder.text.contains("mark", ignoreCase = true) ||
+                reminder.text.contains("score", ignoreCase = true) ||
+                reminder.text.contains("paper", ignoreCase = true) ||
+                reminder.text.contains("exam", ignoreCase = true)
+
+        val message = if (isEnrollOrSignin) {
+            "Welcome to Shree AmarMohan Tuition! Dear Parent, student ${student.name} (Reg No: ${student.slNo}, Class: ${student.standard}) has been successfully enrolled. Regards, Shree AmarMohan Tuition."
+        } else if (isTestMarks) {
+            "Dear Parent, test marks update for ${student.name}: ${reminder.text}. Verified and recorded in the Shree AmarMohan app. Regards, Shree AmarMohan Tuition."
+        } else {
+            "Hello, regarding message for ${student.name} ('${reminder.text}'): Regards, Shree AmarMohan Tuition."
+        }
+        openSmsApp(context, student.parentPhone, message)
+        removeReminder(student.slNo, reminder.id)
+
+        try {
+            val notificationManager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+            notificationManager?.cancel((student.name + reminder.text).hashCode())
+            notificationManager?.cancel((student.slNo + "_enroll").hashCode())
+            notificationManager?.cancel((student.slNo + "_signin").hashCode())
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Opens SMS app pre-populated with test marks update and removes the notification.
+     */
+    fun openTestMarksUpdateSms(
+        context: android.content.Context,
+        student: Student,
+        reminder: Reminder
+    ) {
+        val message = "Dear Parent, test marks update for ${student.name}: ${reminder.text}. Verified and recorded in the Shree AmarMohan app. Regards, Shree AmarMohan Tuition."
+        openSmsApp(context, student.parentPhone, message)
+        removeReminder(student.slNo, reminder.id)
+        try {
+            val notificationManager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+            notificationManager?.cancel((student.name + reminder.text).hashCode())
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Prewritten SMS for welcoming newly enrolled or signed in student.
+     * When clicked by tutor, opens SMS app pre-populated and removes notification.
+     */
+    fun openWelcomeSmsForNewStudent(
+        context: android.content.Context,
+        student: Student,
+        reminderId: String? = null
+    ) {
+        val message = "Welcome to Shree AmarMohan Tuition! Dear Parent, student ${student.name} (Reg No: ${student.slNo}, Class: ${student.standard}) has been successfully enrolled. Regards, Shree AmarMohan Tuition."
+        openSmsApp(context, student.parentPhone, message)
+        if (reminderId != null) {
+            removeReminder(student.slNo, reminderId)
+        } else {
+            student.getReminders().filter {
+                it.text.contains("New Student", ignoreCase = true) ||
+                        it.text.contains("Enrolled", ignoreCase = true) ||
+                        it.text.contains("Signed In", ignoreCase = true)
+            }.forEach {
+                removeReminder(student.slNo, it.id)
+            }
+        }
+        try {
+            val notificationManager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+            notificationManager?.cancel((student.slNo + "_enroll").hashCode())
+            notificationManager?.cancel((student.slNo + "_signin").hashCode())
+        } catch (_: Exception) {}
     }
 
     /**
@@ -922,37 +1050,18 @@ class MainViewModel(private val repository: StudentRepository, private val conte
      * Message: "student was absent on $date"
      */
     fun sendAbsentNotificationSms(context: android.content.Context, parentPhone: String, date: String) {
-        val message = " Student was absent on $date. Please make sure to send the student regularly for better progress"
+        val message = "student was absent on $date"
         sendDirectSms(context, parentPhone, message)
         android.widget.Toast.makeText(context, "SMS sent to parent ($parentPhone): \"$message\"", android.widget.Toast.LENGTH_LONG).show()
     }
 
     /**
-     * Sent on student's birthdate.
+     * Opens SMS app on student's birthdate with greeting message pre-typed for tutor control.
      * Message: " happy Birthday dear $name, wish you a very successfull and prosporous life ahead , stay healthy and happy , regards Shree amarmohan tutions ."
      */
     fun sendBirthdayGreetingSms(context: android.content.Context, phone: String, studentName: String) {
-        val message = " 🎉 Happy Birthday, Dear $studentName! 🎂\n" +
-                "\n" +
-                "Wishing you a very successful, prosperous, and fulfilling life ahead. May you always stay healthy, happy, and blessed, and may all your dreams and goals come true.\n" +
-                "\n" +
-                "Have a wonderful birthday and a fantastic year ahead! 🌟\n" +
-                "\n" +
-                "Warm regards,\n" +
-                "Shree Amarmohan Tuitions."
-        sendDirectSms(context, phone, message)
-        android.widget.Toast.makeText(context, "🎂 Birthday SMS sent to $studentName ($phone)!", android.widget.Toast.LENGTH_LONG).show()
-    }
-
-    /**
-     * Sent when a new student is enrolled by tutor.
-     * Automated welcome message to parent via SMS.
-     */
-    fun sendWelcomeSmsToParent(context: android.content.Context, parentPhone: String, studentName: String, parentName: String = "") {
-        val cleanParent = if (parentName.isNotBlank()) "Dear $parentName, " else "Dear Parent, "
-        val message = "${cleanParent}welcome to Shree AmarMohan Tuitions! $studentName has been enrolled successfully. You can log in with mobile number $parentPhone on the app to track attendance, test performance, and tuition schedules."
-        sendDirectSms(context, parentPhone, message)
-        android.widget.Toast.makeText(context, "Welcome SMS dispatched to parent ($parentPhone)!", android.widget.Toast.LENGTH_LONG).show()
+        val message = " happy Birthday dear $studentName, wish you a very successfull and prosporous life ahead , stay healthy and happy , regards Shree amarmohan tutions ."
+        openSmsApp(context, phone, message)
     }
 
     /**
@@ -971,8 +1080,8 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                 val m = parts[1].toIntOrNull() ?: return false
                 val d = parts[2].toIntOrNull() ?: return false
                 return m == todayMonth && d == todayDay
-            } else if (parts[2].length == 4) {
-                // DD-MM-YYYY
+            } else {
+                // DD-MM-YYYY or DD-MM-YY
                 val d = parts[0].toIntOrNull() ?: return false
                 val m = parts[1].toIntOrNull() ?: return false
                 return m == todayMonth && d == todayDay
@@ -987,33 +1096,21 @@ class MainViewModel(private val repository: StudentRepository, private val conte
     }
 
     /**
-     * Checks all students and sends automatic birthday greetings once per day.
+     * In-app birthday reminder check (automated direct background SMS removed per user instructions).
      */
     fun checkAndSendAutomaticBirthdayGreetings(context: android.content.Context) {
-        val hasSmsPermission = androidx.core.content.ContextCompat.checkSelfPermission(
-            context,
-            android.Manifest.permission.SEND_SMS
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        if (!hasSmsPermission) {
-            android.util.Log.d("SMS_DISPATCH", "Skipping automatic birthday SMS check: SEND_SMS permission not granted yet.")
-            return
-        }
+        // Automated direct SMS removed. Tutor is reminded via app button and notifications,
+        // and clicks to open SMS app with complete control.
+    }
 
+    private val _birthdayDismissedVersion = MutableStateFlow(0)
+    val birthdayDismissedVersion: StateFlow<Int> = _birthdayDismissedVersion.asStateFlow()
+
+    fun markBirthdaySmsSent(studentSlNo: String) {
         val todayDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
-        val allStudents = students.value
-        allStudents.forEach { student ->
-            if (isBirthdayToday(student.birthDate) && student.parentPhone.isNotBlank()) {
-                val sentKey = "birthday_sms_sent_${student.slNo}_$todayDate"
-                val alreadySent = prefs.getBoolean(sentKey, false)
-                if (!alreadySent) {
-                    sendBirthdayGreetingSms(context, student.parentPhone, student.name)
-                    prefs.edit()
-                        .putBoolean(sentKey, true)
-                        .putBoolean("birthday_sms_sent_ever_${student.slNo}", true)
-                        .apply()
-                }
-            }
-        }
+        val sentKey = "birthday_sms_sent_${studentSlNo}_$todayDate"
+        prefs.edit().putBoolean(sentKey, true).apply()
+        _birthdayDismissedVersion.value += 1
     }
 
     fun isBirthdaySmsSentToday(studentSlNo: String): Boolean {
@@ -1022,22 +1119,13 @@ class MainViewModel(private val repository: StudentRepository, private val conte
         return prefs.getBoolean(sentKey, false)
     }
 
-    fun isBirthdaySmsSentToday(studentSlNo: Int): Boolean {
-        return isBirthdaySmsSentToday(studentSlNo.toString())
-    }
-
-    fun isBirthdaySmsSentEver(studentSlNo: String): Boolean {
-        return prefs.getBoolean("birthday_sms_sent_ever_${studentSlNo}", false)
-    }
-
     fun sendBirthdayGreetingManually(context: android.content.Context, student: Student) {
-        val todayDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
-        val sentKey = "birthday_sms_sent_${student.slNo}_$todayDate"
         sendBirthdayGreetingSms(context, student.parentPhone, student.name)
-        prefs.edit()
-            .putBoolean(sentKey, true)
-            .putBoolean("birthday_sms_sent_ever_${student.slNo}", true)
-            .apply()
+        markBirthdaySmsSent(student.slNo)
+        try {
+            val notificationManager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+            notificationManager?.cancel(student.name.hashCode())
+        } catch (_: Exception) {}
     }
 
     /**
@@ -1132,12 +1220,28 @@ class MainViewModel(private val repository: StudentRepository, private val conte
             }
 
             if (!isPasswordValid) {
-                onError("Incorrect password.")
+                onError("Incorrect password. The default password is your student's name.")
                 return@launch
             }
 
             if (matchingStudents.isNotEmpty()) {
                 val primaryStudent = matchingStudents.first()
+                val notifId = "signin_${primaryStudent.slNo}_${System.currentTimeMillis()}"
+                val notifText = "🎉 Student Signed In: ${primaryStudent.name} (SL: ${primaryStudent.slNo}). Tap to review & send welcome SMS to parent."
+                addReminder(
+                    studentSlNo = primaryStudent.slNo,
+                    text = notifText,
+                    isImportant = true,
+                    isByParent = true,
+                    customId = notifId
+                )
+                com.amarmohan.core.receiver.BirthdayAlarmReceiver.showNewStudentNotification(
+                    context = context,
+                    student = primaryStudent,
+                    reminderId = notifId,
+                    isSignIn = true
+                )
+
                 prefs.edit()
                     .putString("session_type", "PARENT")
                     .putString("session_parent_phone", phone.trim())
@@ -1150,10 +1254,21 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                 val safeParentName = parentName ?: "Parent"
                 val slNoA = "SL_" + (100000..999999).random()
                 val slNoB = "SL_" + (100000..999999).random()
+                val todayStr = java.text.SimpleDateFormat("dd-MM-yyyy", java.util.Locale.getDefault()).format(java.util.Date())
 
                 val parentFlatNo = prefs.getString("parent_flat_$cleanPhone", "N/A") ?: "N/A"
                 val parentEmail = prefs.getString("parent_email_$cleanPhone", "parent@example.com") ?: "parent@example.com"
 
+                val notifIdA = "enroll_${slNoA}_${System.currentTimeMillis()}"
+                val notifTextA = "🎉 New Student Enrolled: $safeParentName's Student A (SL: $slNoA). Tap to review & send welcome SMS to parent."
+                val enrollReminderA = Reminder(
+                    id = notifIdA,
+                    text = notifTextA,
+                    date = todayStr,
+                    isImportant = true,
+                    isByParent = true,
+                    isReadByTutor = false
+                )
                 val kidA = Student(
                     slNo = slNoA,
                     name = "$safeParentName's Student A",
@@ -1164,6 +1279,17 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                     school = "AmarMohan School",
                     board = "CBSE",
                     standard = "Class 10"
+                ).withReminders(listOf(enrollReminderA))
+
+                val notifIdB = "enroll_${slNoB}_${System.currentTimeMillis() + 1}"
+                val notifTextB = "🎉 New Student Enrolled: $safeParentName's Student B (SL: $slNoB). Tap to review & send welcome SMS to parent."
+                val enrollReminderB = Reminder(
+                    id = notifIdB,
+                    text = notifTextB,
+                    date = todayStr,
+                    isImportant = true,
+                    isByParent = true,
+                    isReadByTutor = false
                 )
                 val kidB = Student(
                     slNo = slNoB,
@@ -1175,10 +1301,23 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                     school = "AmarMohan School",
                     board = "CBSE",
                     standard = "Class 10"
-                )
+                ).withReminders(listOf(enrollReminderB))
 
                 repository.addStudent(kidA)
                 repository.addStudent(kidB)
+
+                com.amarmohan.core.receiver.BirthdayAlarmReceiver.showNewStudentNotification(
+                    context = context,
+                    student = kidA,
+                    reminderId = notifIdA,
+                    isSignIn = false
+                )
+                com.amarmohan.core.receiver.BirthdayAlarmReceiver.showNewStudentNotification(
+                    context = context,
+                    student = kidB,
+                    reminderId = notifIdB,
+                    isSignIn = false
+                )
 
                 delay(100)
 
@@ -1326,22 +1465,25 @@ class MainViewModel(private val repository: StudentRepository, private val conte
             if (existing != null) {
                 persistStudentUpdate(finalUpdated)
             } else {
-                persistStudentAdd(finalUpdated)
-                // Automated welcome message to parents via SMS as soon as student is added
-                if (finalUpdated.parentPhone.isNotBlank()) {
-                    sendWelcomeSmsToParent(context, finalUpdated.parentPhone, finalUpdated.name, finalUpdated.parentName)
-                }
-            }
+                val notifId = "enroll_${finalUpdated.slNo}_${System.currentTimeMillis()}"
+                val notifText = "🎉 New Student Enrolled: ${finalUpdated.name} (SL: ${finalUpdated.slNo}). Tap to review & send welcome SMS to parent."
+                val todayStr = java.text.SimpleDateFormat("dd-MM-yyyy", java.util.Locale.getDefault()).format(java.util.Date())
+                val enrollReminder = Reminder(
+                    id = notifId,
+                    text = notifText,
+                    date = todayStr,
+                    isImportant = true,
+                    isByParent = true,
+                    isReadByTutor = false
+                )
+                val finalWithReminder = finalUpdated.withReminders(listOf(enrollReminder))
+                persistStudentAdd(finalWithReminder)
 
-            // Immediately check if today is student's birthday and dispatch SMS to parent
-            if (finalUpdated.birthDate.isNotBlank() && isBirthdayToday(finalUpdated.birthDate) && finalUpdated.parentPhone.isNotBlank()) {
-                val todayDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
-                val sentKey = "birthday_sms_sent_${finalUpdated.slNo}_$todayDate"
-                val alreadySent = prefs.getBoolean(sentKey, false)
-                if (!alreadySent) {
-                    sendBirthdayGreetingSms(context, finalUpdated.parentPhone, finalUpdated.name)
-                    prefs.edit().putBoolean(sentKey, true).apply()
-                }
+                com.amarmohan.core.receiver.BirthdayAlarmReceiver.showNewStudentNotification(
+                    context = context,
+                    student = finalUpdated,
+                    reminderId = notifId
+                )
             }
 
             if (!_isTutorTestMode.value) {
@@ -1353,17 +1495,6 @@ class MainViewModel(private val repository: StudentRepository, private val conte
     fun updateStudent(student: Student) {
         viewModelScope.launch {
             persistStudentUpdate(student)
-
-            // Immediately check if today is student's birthday and dispatch SMS to parent
-            if (student.birthDate.isNotBlank() && isBirthdayToday(student.birthDate) && student.parentPhone.isNotBlank()) {
-                val todayDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
-                val sentKey = "birthday_sms_sent_${student.slNo}_$todayDate"
-                val alreadySent = prefs.getBoolean(sentKey, false)
-                if (!alreadySent) {
-                    sendBirthdayGreetingSms(context, student.parentPhone, student.name)
-                    prefs.edit().putBoolean(sentKey, true).apply()
-                }
-            }
 
             if (!_isTutorTestMode.value) {
                 refreshData()
@@ -1447,6 +1578,30 @@ class MainViewModel(private val repository: StudentRepository, private val conte
             val student = getStudent(studentSlNo) ?: return@launch
             val updated = student.copy(
                 dueAmount = dueValue
+            )
+            persistStudentUpdate(updated)
+        }
+    }
+
+    fun saveStudentLedgerEntry(
+        studentSlNo: String,
+        month: String,
+        tuitionFee: Double,
+        dueAmount: Double,
+        demoFee: Double,
+        isPaid: Boolean
+    ) {
+        viewModelScope.launch {
+            val student = getStudent(studentSlNo) ?: return@launch
+            val attendance = student.getAttendance().toMutableMap()
+            val key = "fee_$month"
+            attendance[key] = isPaid
+
+            val updated = student.withAttendance(attendance).copy(
+                isFeesPaid = isPaid,
+                tuitionFee = tuitionFee,
+                dueAmount = dueAmount,
+                demoFee = demoFee
             )
             persistStudentUpdate(updated)
         }
@@ -2192,7 +2347,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                         finalImageBytes = file.readBytes()
                     }
                 } catch (e: Exception) {
-                    Log.e("MainViewModel", "Failed to read local file bytes for upload", e)
+                    Log.w("MainViewModel", "Failed to read local file bytes for upload: ${e.message}")
                 }
             }
 
@@ -2216,7 +2371,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                     finalUri = publicUrl
                     Log.d("MainViewModel", "Supabase storage upload completed! Public URL: $finalUri")
                 } catch (e: Exception) {
-                    Log.e("MainViewModel", "Failed to upload image to Supabase Storage", e)
+                    Log.w("MainViewModel", "Failed to upload image to Supabase Storage: ${e.message}")
                 }
             } else if (finalImageBytes != null) {
                 val fileName = "local_paper_${studentSlNo}_${System.currentTimeMillis()}.jpg"
@@ -2268,7 +2423,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                         finalImageBytes = file.readBytes()
                     }
                 } catch (e: Exception) {
-                    Log.e("MainViewModel", "Failed to read local tutor file bytes for upload", e)
+                    Log.w("MainViewModel", "Failed to read local tutor file bytes for upload: ${e.message}")
                 }
             }
 
@@ -2291,7 +2446,7 @@ class MainViewModel(private val repository: StudentRepository, private val conte
                     finalTutorUri = publicUrl
                     Log.d("MainViewModel", "Supabase tutor storage upload completed! Public URL: $finalTutorUri")
                 } catch (e: Exception) {
-                    Log.e("MainViewModel", "Failed to upload tutor image to Supabase Storage", e)
+                    Log.w("MainViewModel", "Failed to upload tutor image to Supabase Storage: ${e.message}")
                 }
             }
 
@@ -2347,11 +2502,11 @@ class MainViewModel(private val repository: StudentRepository, private val conte
     }
 
     // Parent/Teacher adds reminders
-    fun addReminder(studentSlNo: String, text: String, isDemos: Boolean = false, isPayDay: Boolean = false, isImportant: Boolean = false, isByParent: Boolean = false) {
+    fun addReminder(studentSlNo: String, text: String, isDemos: Boolean = false, isPayDay: Boolean = false, isImportant: Boolean = false, isByParent: Boolean = false, customId: String? = null) {
         viewModelScope.launch {
             val student = getStudent(studentSlNo) ?: return@launch
             val reminders = student.getReminders().toMutableList()
-            val newId = "rem_" + System.currentTimeMillis()
+            val newId = customId ?: ("rem_" + System.currentTimeMillis())
             val newReminder = Reminder(
                 id = newId,
                 text = text,
@@ -2383,6 +2538,19 @@ class MainViewModel(private val repository: StudentRepository, private val conte
         viewModelScope.launch {
             val student = getStudent(studentSlNo) ?: return@launch
             val reminders = student.getReminders().filter { it.id != reminderId }
+            val updated = student.withReminders(reminders)
+            persistStudentUpdate(updated)
+        }
+    }
+
+    fun removeEnrollmentReminders(studentSlNo: String) {
+        viewModelScope.launch {
+            val student = getStudent(studentSlNo) ?: return@launch
+            val reminders = student.getReminders().filterNot {
+                it.text.contains("New Student", ignoreCase = true) ||
+                        it.text.contains("Enrolled", ignoreCase = true) ||
+                        it.text.contains("Signed In", ignoreCase = true)
+            }
             val updated = student.withReminders(reminders)
             persistStudentUpdate(updated)
         }

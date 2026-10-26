@@ -203,9 +203,11 @@ object SupabaseProvider {
                 val okHttpClient = OkHttpClient.Builder()
                     .addInterceptor(headerInterceptor)
                     .addInterceptor(loggingInterceptor)
-                    .connectTimeout(20, TimeUnit.SECONDS)
-                    .readTimeout(20, TimeUnit.SECONDS)
-                    .writeTimeout(20, TimeUnit.SECONDS)
+                    .connectTimeout(5, TimeUnit.SECONDS)
+                    .readTimeout(8, TimeUnit.SECONDS)
+                    .writeTimeout(8, TimeUnit.SECONDS)
+                    .callTimeout(10, TimeUnit.SECONDS)
+                    .retryOnConnectionFailure(false)
                     .build()
 
                 val moshi = Moshi.Builder()
@@ -225,7 +227,7 @@ object SupabaseProvider {
                 cachedApi = instance
                 instance
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to initialize Supabase Retrofit client.", e)
+                Log.w(TAG, "Failed to initialize Supabase Retrofit client: ${e.message}")
                 null
             }
         }

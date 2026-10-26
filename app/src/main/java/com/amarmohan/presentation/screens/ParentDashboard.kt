@@ -114,16 +114,9 @@ fun ParentDashboard(
     val subjects = student.getSubjects()
     val testPapers = student.getTestPapers()
     val attendance = student.getAttendance()
-    val cal = java.util.Calendar.getInstance()
-    val daysInMonth = cal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
-    val currentMonthKey = java.text.SimpleDateFormat("yyyy-MM", java.util.Locale.getDefault()).format(cal.time)
-    val monthAttendance = attendance.filterKeys { it.startsWith(currentMonthKey) && !it.startsWith("fee_") }
-    val presentDays = if (monthAttendance.isNotEmpty()) {
-        monthAttendance.count { it.value }
-    } else {
-        attendance.filterKeys { !it.startsWith("fee_") }.count { it.value }
-    }
-    val attendancePct = (presentDays.toFloat() / daysInMonth.toFloat()).coerceIn(0f, 1f)
+    val presentDays = attendance.count { it.value }
+    val totalDays = attendance.size.coerceAtLeast(1)
+    val attendancePct = presentDays.toFloat() / totalDays.toFloat()
 
     // Performance calculated from all tutor-uploaded marksheets & subject scores
     val allScoreEntries = remember(subjects, testPapers) {
@@ -313,38 +306,18 @@ fun ParentDashboard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        // Sl No and Fee Status badges
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        // Sl No pill tag
+                        Box(
+                            modifier = Modifier
+                                .border(1.dp, Color(0xFF7A68E6), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .border(1.dp, Color(0xFF7A68E6), RoundedCornerShape(6.dp))
-                                    .padding(horizontal = 8.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = "Sl No ${student.slNo}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Color(0xFF5138B8),
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-
-                            val isCleared = student.isFeesPaid || student.dueAmount <= 0.0
-                            Surface(
-                                color = if (isCleared) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
-                                border = BorderStroke(1.dp, if (isCleared) Color(0xFFA5D6A7) else Color(0xFFEF9A9A)),
-                                shape = RoundedCornerShape(6.dp)
-                            ) {
-                                Text(
-                                    text = if (isCleared) "Fees: Cleared ✓" else "Fees Due: ₹${student.dueAmount.toInt()}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (isCleared) Color(0xFF166534) else Color(0xFF991B1B),
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                )
-                            }
+                            Text(
+                                text = "Sl No ${student.slNo}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFF5138B8),
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
@@ -462,13 +435,82 @@ fun ParentDashboard(
                             .padding(horizontal = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                        // TOP SUMMARY CARDS (Overall Performance & Attendance)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            // Marks Score Card
+                            Card(
+                                modifier = Modifier.weight(1f),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFF3E8FF)),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(14.dp)) {
+                                    Text(
+                                        text = "${avgScorePct}%",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF5138B8)
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.MenuBook,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(12.dp),
+                                            tint = Color.Gray
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "Marks Score",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color.Gray
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Attendance Summary Card
+                            Card(
+                                modifier = Modifier.weight(1f),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF0F2)),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(14.dp)) {
+                                    Text(
+                                        text = "$presentDays/$totalDays",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFEC4899)
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.FactCheck,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(12.dp),
+                                            tint = Color.Gray
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "Attendance",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color.Gray
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
                         // CATEGORY PILL ROW (Performance | Attendance Calendar | Syllabus Notes)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(Color(0xFFEDE9FE), RoundedCornerShape(16.dp))
-                                .padding(6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                .padding(8.dp)
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             // 1. Performance Button
@@ -480,17 +522,17 @@ fun ParentDashboard(
                                 ),
                                 elevation = if (activeDashboardSubTab == 0) ButtonDefaults.buttonElevation(defaultElevation = 2.dp) else null,
                                 shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.weight(1f),
-                                contentPadding = PaddingValues(vertical = 10.dp, horizontal = 4.dp)
+                                modifier = Modifier.defaultMinSize(minWidth = 120.dp),
+                                contentPadding = PaddingValues(vertical = 12.dp, horizontal = 14.dp)
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Icon(
                                         imageVector = Icons.Default.School,
                                         contentDescription = "Performance",
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(22.dp)
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    Text("Performance", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                    Text("Performance", fontSize = 12.sp, fontWeight = FontWeight.Black, maxLines = 1)
                                 }
                             }
 
@@ -503,17 +545,17 @@ fun ParentDashboard(
                                 ),
                                 elevation = if (activeDashboardSubTab == 1) ButtonDefaults.buttonElevation(defaultElevation = 2.dp) else null,
                                 shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.weight(1f),
-                                contentPadding = PaddingValues(vertical = 10.dp, horizontal = 4.dp)
+                                modifier = Modifier.defaultMinSize(minWidth = 120.dp),
+                                contentPadding = PaddingValues(vertical = 12.dp, horizontal = 14.dp)
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Icon(
                                         imageVector = Icons.Default.CalendarMonth,
                                         contentDescription = "Attendance Calendar",
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(22.dp)
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    Text("Attendance", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                    Text("Attendance", fontSize = 12.sp, fontWeight = FontWeight.Black, maxLines = 1)
                                 }
                             }
 
@@ -526,17 +568,17 @@ fun ParentDashboard(
                                 ),
                                 elevation = if (activeDashboardSubTab == 2) ButtonDefaults.buttonElevation(defaultElevation = 2.dp) else null,
                                 shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.weight(1f),
-                                contentPadding = PaddingValues(vertical = 10.dp, horizontal = 4.dp)
+                                modifier = Modifier.defaultMinSize(minWidth = 120.dp),
+                                contentPadding = PaddingValues(vertical = 12.dp, horizontal = 14.dp)
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Icon(
                                         imageVector = Icons.Default.MenuBook,
                                         contentDescription = "Syllabus Notes",
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(22.dp)
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    Text("Syllabus", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                    Text("Syllabus", fontSize = 12.sp, fontWeight = FontWeight.Black, maxLines = 1)
                                 }
                             }
                         }
@@ -561,7 +603,7 @@ fun ParentDashboard(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "Subject-wise Marks Breakdown :",
+                                            text = "Subject-wise Marks Visual (All Chosen Subjects):",
                                             fontWeight = FontWeight.Bold,
                                             color = Color(0xFF32236F),
                                             style = MaterialTheme.typography.bodyMedium
@@ -632,17 +674,32 @@ fun ParentDashboard(
                                                                     fontSize = 14.sp
                                                                 )
                                                                 Text(
-                                                                    text = if (isExpanded) "Tap to collapse" else "Tap to view subject marks and evaluation history",
+                                                                    text = if (isExpanded) "Tap to collapse" else "Tap to view subject marks visual",
                                                                     fontSize = 10.sp,
                                                                     color = Color.Gray
                                                                 )
                                                             }
                                                         }
-                                                        Icon(
-                                                            imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                                                            contentDescription = "Toggle Dropdown",
-                                                            tint = Color(0xFF7C3AED)
-                                                        )
+                                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                                            Surface(
+                                                                shape = RoundedCornerShape(6.dp),
+                                                                color = statusColor.copy(alpha = 0.12f),
+                                                                modifier = Modifier.padding(end = 6.dp)
+                                                            ) {
+                                                                Text(
+                                                                    text = "${marksVal.toInt()}/${maxMarksVal.toInt()} ($pct%)",
+                                                                    fontSize = 11.sp,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    color = statusColor,
+                                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                                                )
+                                                            }
+                                                            Icon(
+                                                                imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                                                contentDescription = "Toggle Dropdown",
+                                                                tint = Color(0xFF7C3AED)
+                                                            )
+                                                        }
                                                     }
 
                                                     // Dropdown Content
@@ -653,7 +710,7 @@ fun ParentDashboard(
                                                                 .padding(14.dp),
                                                             verticalArrangement = Arrangement.spacedBy(10.dp)
                                                         ) {
-                                                            // Marks Overview
+                                                            // Visual Marks Gauge
                                                             Row(
                                                                 modifier = Modifier.fillMaxWidth(),
                                                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -745,18 +802,12 @@ fun ParentDashboard(
                                         }
                                     }
                                 }
-                                // FEES DUE CARD (Color Indication: Red for Due, Green for Paid)
-                                val isFeesPaidOrCleared = student.isFeesPaid || student.dueAmount <= 0.0
-                                val feeContainerBg = if (isFeesPaidOrCleared) Color(0xFFF0FDF4) else Color(0xFFFEF2F2)
-                                val feeBorderColor = if (isFeesPaidOrCleared) Color(0xFF86EFAC) else Color(0xFFFCA5A5)
-                                val feeAccentColor = if (isFeesPaidOrCleared) Color(0xFF166534) else Color(0xFF991B1B)
-                                val feeBadgeBg = if (isFeesPaidOrCleared) Color(0xFFDCFCE7) else Color(0xFFFEE2E2)
-
+                                // FEES DUE CARD
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
                                     shape = RoundedCornerShape(16.dp),
-                                    colors = CardDefaults.cardColors(containerColor = feeContainerBg),
-                                    border = BorderStroke(1.5.dp, feeBorderColor)
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFFEBF1FF)),
+                                    border = BorderStroke(1.dp, Color(0xFFD3E0FF))
                                 ) {
                                     Column(modifier = Modifier.padding(16.dp)) {
                                         Row(
@@ -764,42 +815,26 @@ fun ParentDashboard(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Icon(
-                                                    imageVector = if (isFeesPaidOrCleared) Icons.Default.CheckCircle else Icons.Default.Warning,
-                                                    contentDescription = null,
-                                                    tint = feeAccentColor,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Text(
-                                                    text = if (isFeesPaidOrCleared) "Fees Status" else "Fees Due",
-                                                    style = MaterialTheme.typography.titleMedium,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = feeAccentColor
-                                                )
-                                            }
-                                            Surface(
-                                                color = feeBadgeBg,
-                                                border = BorderStroke(1.dp, feeBorderColor),
-                                                shape = RoundedCornerShape(8.dp)
-                                            ) {
-                                                Text(
-                                                    text = if (isFeesPaidOrCleared) "PAID (₹0 DUE)" else "DUE: ₹${student.dueAmount.toInt()}",
-                                                    style = MaterialTheme.typography.titleMedium,
-                                                    fontWeight = FontWeight.Black,
-                                                    color = feeAccentColor,
-                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                                )
-                                            }
+                                            Text(
+                                                text = "Fees Due",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = Color(0xFF1E3A8A)
+                                            )
+                                            val actualDue = student.dueAmount.toInt()
+                                            Text(
+                                                text = "₹$actualDue",
+                                                style = MaterialTheme.typography.titleLarge,
+                                                fontWeight = FontWeight.Black,
+                                                color = Color(0xFF1E3A8A)
+                                            )
                                         }
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        val feeSubtext = if (isFeesPaidOrCleared) "All tuition fees cleared ✓ No outstanding balance" else "Payment pending: Please clear outstanding tuition fee ₹${student.dueAmount.toInt()}"
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        val feeSubtext = if (student.isFeesPaid || student.dueAmount <= 0.0) "All dues cleared!" else "Pending Outstanding Due"
                                         Text(
                                             text = feeSubtext,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontWeight = FontWeight.Medium,
-                                            color = feeAccentColor
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (student.isFeesPaid || student.dueAmount <= 0.0) Color(0xFF10B981) else Color(0xFF2563EB)
                                         )
                                     }
                                 }
@@ -830,10 +865,7 @@ fun ParentDashboard(
 
                                     Button(
                                         onClick = {
-                                            val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$tutorPhoneToContact")).apply {
-                                                putExtra("sms_body", "Hello Ma'am, regarding student ${student.name}.")
-                                            }
-                                            context.startActivity(intent)
+                                            viewModel.openSmsApp(context, tutorPhoneToContact, "Hello Amarmohan Sir, regarding student ${student.name}.")
                                         },
                                         modifier = Modifier
                                             .weight(1f)
@@ -850,7 +882,7 @@ fun ParentDashboard(
 
                             1 -> {
                                 // ATTENDANCE SUB-TAB WITH CALENDAR
-                                ParentAttendanceDonutChart(attendancePct, presentDays, daysInMonth)
+                                ParentAttendanceDonutChart(attendancePct, presentDays)
 
                                 // Interactive Monthly Attendance Calendar
                                 ParentAttendanceCalendar(attendance = attendance)
@@ -1400,7 +1432,7 @@ fun ParentDashboard(
                                         color = Color(0xFF4C1D95)
                                     )
                                     Text(
-                                        text = "Registered and maintained by Tutor. Contact tutor for any updates.",
+                                        text = "Registered and maintained by Tutor (Amarmohan Sir). Contact tutor for any updates.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = Color(0xFF6D28D9)
                                     )
@@ -1660,67 +1692,29 @@ fun ParentDashboard(
 
 
                         // 4. Tuition Fee Ledger Card
-                        val isLedgerFeeCleared = student.isFeesPaid || student.dueAmount <= 0.0
-                        val feeLedgerContainer = if (isLedgerFeeCleared) Color(0xFFF0FDF4) else Color(0xFFFEF2F2)
-                        val feeLedgerBorder = if (isLedgerFeeCleared) Color(0xFF86EFAC) else Color(0xFFFCA5A5)
-                        val feeLedgerHighlight = if (isLedgerFeeCleared) Color(0xFF15803D) else Color(0xFFB91C1C)
-
                         Card(
                             modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = feeLedgerContainer),
-                            border = BorderStroke(1.5.dp, feeLedgerBorder),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
                             shape = RoundedCornerShape(16.dp)
                         ) {
                             Column(
                                 modifier = Modifier.padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "Tuition Fee Summary",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF1E1B4B)
-                                    )
-                                    Surface(
-                                        color = if (isLedgerFeeCleared) Color(0xFFDCFCE7) else Color(0xFFFEE2E2),
-                                        border = BorderStroke(1.dp, feeLedgerBorder),
-                                        shape = RoundedCornerShape(8.dp)
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(
-                                                imageVector = if (isLedgerFeeCleared) Icons.Default.CheckCircle else Icons.Default.Warning,
-                                                contentDescription = null,
-                                                tint = feeLedgerHighlight,
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text(
-                                                text = if (isLedgerFeeCleared) "CLEARED" else "UNPAID",
-                                                color = feeLedgerHighlight,
-                                                fontWeight = FontWeight.Black,
-                                                fontSize = 11.sp
-                                            )
-                                        }
-                                    }
-                                }
-                                HorizontalDivider(color = if (isLedgerFeeCleared) Color(0xFFDCFCE7) else Color(0xFFFEE2E2))
+                                Text(
+                                    text = "Tuition Fee Summary",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1E1B4B)
+                                )
+                                HorizontalDivider(color = Color(0xFFF1F5F9))
 
                                 InfoRow(label = "Monthly Tuition Fee", value = "₹${student.tuitionFee.toInt()}")
-                                InfoRow(
-                                    label = "Current Outstanding Due",
-                                    value = if (isLedgerFeeCleared) "₹0 (Cleared)" else "₹${student.dueAmount.toInt()}"
-                                )
+                                InfoRow(label = "Current Outstanding Due", value = "₹${student.dueAmount.toInt()}")
                                 InfoRow(
                                     label = "Payment Status",
-                                    value = if (isLedgerFeeCleared) "Cleared ✓" else "Unpaid (Due: ₹${student.dueAmount.toInt()})"
+                                    value = if (student.isFeesPaid || student.dueAmount <= 0.0) "Cleared ✓" else "Pending"
                                 )
                             }
                         }
@@ -1749,7 +1743,13 @@ fun ParentDashboard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(30.dp))
+            Spacer(modifier = Modifier.height(20.dp))
+            Text(
+                text = "🧿",
+                fontSize = 16.sp,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
+            )
         }
     }
 
@@ -1856,6 +1856,12 @@ fun ParentDashboard(
                             studentName = student.name,
                             subject = paper.subjectName,
                             queryText = queryText.trim()
+                        )
+                        viewModel.addReminder(
+                            studentSlNo = student.slNo,
+                            text = "Query on ${paper.subjectName}: ${queryText.trim()}",
+                            isImportant = true,
+                            isByParent = true
                         )
                         querySelectedPaper = null
                         queryText = ""
@@ -2683,7 +2689,7 @@ private fun ParentPerformanceMarksLineChart(
 
 // COMPOSABLE COMPONENT: Attendance Donut Chart for Parent Dashboard
 @Composable
-private fun ParentAttendanceDonutChart(pct: Float, presentDays: Int, daysInMonth: Int = 30) {
+private fun ParentAttendanceDonutChart(pct: Float, presentDays: Int) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -2739,7 +2745,7 @@ private fun ParentAttendanceDonutChart(pct: Float, presentDays: Int, daysInMonth
                         color = Color(0xFF10B981)
                     )
                     Text(
-                        text = "$presentDays / $daysInMonth Days Present",
+                        text = "$presentDays Days Present",
                         fontSize = 11.sp,
                         color = Color.Gray
                     )

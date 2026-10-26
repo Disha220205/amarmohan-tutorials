@@ -27,7 +27,10 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Logout
@@ -305,7 +308,10 @@ fun TutorDashboard(
                             showSettingsMenu = showSettingsMenu,
                             onDismissSettings = { showSettingsMenu = false },
                             viewModel = viewModel,
-                            onOpenDrawer = { coroutineScope.launch { drawerState.open() } }
+                            onOpenDrawer = { coroutineScope.launch { drawerState.open() } },
+                            onStudentClick = { student ->
+                                selectedStudentForDetail = student
+                            }
                         )
                     }
 
@@ -476,6 +482,47 @@ fun TutorRefreshIconButton(
     }
 }
 
+@Composable
+fun TutorNotificationIconButton(
+    totalAlertCount: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    iconSize: androidx.compose.ui.unit.Dp = 28.dp
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = modifier.testTag("notification_button")
+    ) {
+        Box(
+            modifier = Modifier.size(iconSize + 8.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Notifications,
+                contentDescription = "Notifications",
+                tint = if (totalAlertCount > 0) Color(0xFF7E22CE) else Color(0xFF423870),
+                modifier = Modifier.size(iconSize)
+            )
+            if (totalAlertCount > 0) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .background(Color(0xFFEF4444), shape = CircleShape)
+                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                ) {
+                    Text(
+                        text = if (totalAlertCount > 99) "99+" else "$totalAlertCount",
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        lineHeight = 10.sp
+                    )
+                }
+            }
+        }
+    }
+}
+
 // ==========================================
 // CUSTOM TOP BAR WITH LOGOUT BUTTON INSTEAD OF SETTINGS
 // ==========================================
@@ -523,7 +570,7 @@ fun TutorTopBar(
                 }
                 Column {
                     Text(
-                        text = "Shree AmarMohan 🧿",
+                        text = "Shree AmarMohan",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Medium,
                         color = Color(0xFF5138B8)
@@ -554,36 +601,37 @@ fun TutorHomeScreen(
     showSettingsMenu: Boolean = false,
     onDismissSettings: () -> Unit = {},
     viewModel: MainViewModel,
-    onOpenDrawer: () -> Unit = {}
+    onOpenDrawer: () -> Unit = {},
+    onStudentClick: (Student) -> Unit = {}
 ) {
     val studentsList by viewModel.students.collectAsState()
     val attendanceDates by viewModel.attendanceDates.collectAsState()
     var showRemindersDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
-    LaunchedEffect(studentsList) {
-        if (studentsList.isNotEmpty()) {
-            viewModel.checkAndSendAutomaticBirthdayGreetings(context)
+    val birthdayDismissedVersion by viewModel.birthdayDismissedVersion.collectAsState()
+
+    // Pre-calculate all pending reminders & notifications
+    val allReminders = remember(studentsList) {
+        val list = mutableListOf<Pair<Student, Reminder>>()
+        studentsList.forEach { s ->
+            s.getReminders().forEach { r ->
+                list.add(Pair(s, r))
+            }
         }
+        list.sortByDescending { it.second.id }
+        list
     }
 
-    // Pre-calculate unread and all reminders
-    val allReminders = mutableListOf<Pair<Student, Reminder>>()
-    studentsList.forEach { s ->
-        s.getReminders().forEach { r ->
-            allReminders.add(Pair(s, r))
-        }
+    val birthdayStudents = remember(studentsList, birthdayDismissedVersion) {
+        studentsList.filter { viewModel.isBirthdayToday(it.birthDate) && !viewModel.isBirthdaySmsSentToday(it.slNo) }
     }
-    allReminders.sortByDescending { it.second.id }
 
-    val unreadCount = allReminders.count { it.second.isByParent && !it.second.isReadByTutor }
-
-    val birthdayStudents = remember(studentsList) {
-        studentsList.filter { viewModel.isBirthdayToday(it.birthDate) }
-    }
+    val totalAlertCount = allReminders.size + birthdayStudents.size
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
         contentPadding = PaddingValues(bottom = 32.dp)
     ) {
         item {
@@ -596,10 +644,13 @@ fun TutorHomeScreen(
                             colors = listOf(Color(0xFFE0D7FF), Color(0xFFF1EDFF))
                         )
                     )
-                    .padding(horizontal = 16.dp, vertical = 24.dp)
+                    .padding(horizontal = 16.dp, vertical = 20.dp),
+                contentAlignment = Alignment.Center
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 700.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -621,53 +672,89 @@ fun TutorHomeScreen(
                                 color = Color(0xFF423870)
                             )
                             Text(
-                                text = "Shree AmarMohan Board 🧿",
+                                text = "Shree AmarMohan Board",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = Color(0xFF6B5E9F)
                             )
                         }
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        // Sized identically to TutorRefreshIconButton
+                        TutorNotificationIconButton(
+                            totalAlertCount = totalAlertCount,
                             onClick = { showRemindersDialog = true },
-                            modifier = Modifier.testTag("notification_button")
-                        ) {
-                            Box {
-                                Icon(
-                                    imageVector = Icons.Default.Notifications,
-                                    contentDescription = "Reminders",
-                                    tint = Color(0xFF423870),
-                                    modifier = Modifier.size(28.dp)
-                                )
-                                if (unreadCount > 0) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(8.dp)
-                                            .background(Color.Red, shape = CircleShape)
-                                            .align(Alignment.TopEnd)
-                                    )
-                                }
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(4.dp))
-                        TutorRefreshIconButton(viewModel = viewModel, iconSize = 28.dp)
+                            iconSize = 28.dp
+                        )
+                        TutorRefreshIconButton(
+                            viewModel = viewModel,
+                            iconSize = 28.dp
+                        )
                     }
                 }
             }
         }
 
-        item {
-            var birthdaySmsTriggerCount by remember { mutableIntStateOf(0) }
-            var showAllStudentsBirthdayList by remember { mutableStateOf(false) }
-
-            val unsentBirthdayStudents = remember(studentsList, birthdaySmsTriggerCount) {
-                studentsList.filter { !viewModel.isBirthdaySmsSentToday(it.slNo) }
-            }
-
-            if (birthdayStudents.isNotEmpty()) {
+        if (totalAlertCount > 0) {
+            item {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .widthIn(max = 680.dp)
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .clickable { showRemindersDialog = true },
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFAF5FF)),
+                    border = BorderStroke(1.dp, Color(0xFFE9D5FF)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            Text("🔔", fontSize = 18.sp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = if (birthdayStudents.isNotEmpty() && allReminders.isNotEmpty()) {
+                                        "${birthdayStudents.size} birthday(s) today & ${allReminders.size} notification(s)!"
+                                    } else if (birthdayStudents.isNotEmpty()) {
+                                        "Today is birthday for ${birthdayStudents.joinToString { it.name }}! 🎂"
+                                    } else {
+                                        "${allReminders.size} pending notification(s) / student message(s)!"
+                                    },
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF6B21A8)
+                                )
+                                Text(
+                                    text = "Tap to open Notifications and review/send prewritten SMS",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF9333EA)
+                                )
+                            }
+                        }
+                        Icon(
+                            imageVector = Icons.Default.ChevronRight,
+                            contentDescription = "Open Reminders",
+                            tint = Color(0xFF7E22CE),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        if (birthdayStudents.isNotEmpty()) {
+            item {
+                var birthdaySmsTriggerCount by remember { mutableIntStateOf(0) }
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 680.dp)
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFFFDF2F8)),
                     border = BorderStroke(1.dp, Color(0xFFFBCFE8)),
@@ -685,7 +772,7 @@ fun TutorHomeScreen(
                             )
                         }
                         Text(
-                            "Automatic SMS birthday greetings are scheduled for student birthdates. You can also send or resend birthday SMS instantly below:",
+                            "Today is a student's birthday! Click below to open your SMS app with the birthday message pre-typed. You have full control to review, edit, and send.",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFFB45309)
                         )
@@ -699,6 +786,10 @@ fun TutorHomeScreen(
                                     .fillMaxWidth()
                                     .background(Color.White, RoundedCornerShape(10.dp))
                                     .border(1.dp, Color(0xFFFCE7F3), RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        viewModel.sendBirthdayGreetingManually(context, bStudent)
+                                        birthdaySmsTriggerCount++
+                                    }
                                     .padding(horizontal = 12.dp, vertical = 8.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
@@ -711,7 +802,7 @@ fun TutorHomeScreen(
                                         fontSize = 14.sp
                                     )
                                     Text(
-                                        "DOB: ${bStudent.birthDate.ifBlank { "Not set" }} • Parent: ${bStudent.parentPhone}",
+                                        "DOB: ${bStudent.birthDate} • Parent: ${bStudent.parentPhone}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = Color.Gray
                                     )
@@ -730,7 +821,7 @@ fun TutorHomeScreen(
                                     ) {
                                         Icon(Icons.Default.Send, contentDescription = "Send SMS", tint = Color.White, modifier = Modifier.size(14.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Send Birthday SMS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                        Text("Wish via SMS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                     }
                                 } else {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -796,6 +887,7 @@ fun TutorHomeScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .widthIn(max = 680.dp)
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -932,9 +1024,11 @@ fun TutorHomeScreen(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .widthIn(max = 520.dp)
                     .padding(16.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White)
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
             ) {
                 Column(
                     modifier = Modifier
@@ -947,7 +1041,7 @@ fun TutorHomeScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Reminders & Alerts",
+                            text = "Reminders & Student Messages",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF423870)
@@ -961,16 +1055,361 @@ fun TutorHomeScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Student queries open details. Birthday & test marks reminders open pre-typed SMS.",
+                        fontSize = 11.sp,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
 
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 350.dp)
+                            .heightIn(max = 440.dp)
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        if (allReminders.isEmpty()) {
+                        // Section 1: Today's Student Birthdays (SMS Reminder)
+                        if (birthdayStudents.isNotEmpty()) {
+                            Text(
+                                text = "🎂 Today's Student Birthdays (${birthdayStudents.size}):",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF9D174D)
+                            )
+                            birthdayStudents.forEach { bStudent ->
+                                val isSmsSent = viewModel.isBirthdaySmsSentToday(bStudent.slNo)
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            // SMS reminder on click must open message app with pretyped message
+                                            viewModel.sendBirthdayGreetingManually(context, bStudent)
+                                            showRemindersDialog = false
+                                        },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFDF2F8)),
+                                    border = BorderStroke(1.dp, Color(0xFFFBCFE8))
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text("🎂", fontSize = 16.sp)
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text(
+                                                        text = bStudent.name,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 14.sp,
+                                                        color = Color(0xFF831843)
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Text(
+                                                    text = "Reg No: ${bStudent.slNo} • DOB: ${bStudent.birthDate}",
+                                                    fontSize = 11.sp,
+                                                    color = Color.DarkGray
+                                                )
+                                                Text(
+                                                    text = "Parent Phone: ${bStudent.parentPhone}",
+                                                    fontSize = 11.sp,
+                                                    color = Color(0xFF9D174D),
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        showRemindersDialog = false
+                                                        onStudentClick(bStudent)
+                                                    },
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                    modifier = Modifier.height(30.dp)
+                                                ) {
+                                                    Text("Details", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF831843))
+                                                }
+
+                                                Button(
+                                                    onClick = {
+                                                        viewModel.sendBirthdayGreetingManually(context, bStudent)
+                                                        showRemindersDialog = false
+                                                    },
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = if (isSmsSent) Color(0xFFF472B6) else Color(0xFFDB2777)
+                                                    ),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                    modifier = Modifier.height(30.dp)
+                                                ) {
+                                                    Icon(Icons.Default.Send, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text(
+                                                        text = if (isSmsSent) "Resend SMS" else "Wish via SMS",
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color.White
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Divider(modifier = Modifier.padding(vertical = 4.dp), color = Color(0xFFF3E8FF))
+                        }
+
+                        // Section 2: Messages, Queries & Student Enrollments
+                        val parentMessages = allReminders.filter { it.second.isByParent }
+                        if (parentMessages.isNotEmpty()) {
+                            Text(
+                                text = "📩 Student Notifications & Messages (${parentMessages.size}):",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF6B21A8)
+                            )
+                            parentMessages.forEach { (student, reminder) ->
+                                val isEnrollment = reminder.text.contains("New Student", ignoreCase = true) || reminder.text.contains("Enrolled", ignoreCase = true)
+                                val isTestMarks = reminder.text.contains("test", ignoreCase = true) ||
+                                        reminder.text.contains("mark", ignoreCase = true) ||
+                                        reminder.text.contains("score", ignoreCase = true) ||
+                                        reminder.text.contains("paper", ignoreCase = true) ||
+                                        reminder.text.contains("exam", ignoreCase = true)
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            if (isTestMarks) {
+                                                // When it's a test marks update notification, on click must open message app with pretyped message
+                                                viewModel.openTestMarksUpdateSms(context, student, reminder)
+                                                showRemindersDialog = false
+                                            } else {
+                                                // If notification is from individual student side to tutor then on click of that notification open particular student details
+                                                showRemindersDialog = false
+                                                onStudentClick(student)
+                                            }
+                                        },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (isEnrollment) Color(0xFFF0FDF4) else if (isTestMarks) Color(0xFFFFF7ED) else if (!reminder.isReadByTutor) Color(0xFFF5EFFF) else Color.White
+                                    ),
+                                    border = BorderStroke(
+                                        width = 1.dp,
+                                        color = if (isEnrollment) Color(0xFF86EFAC) else if (isTestMarks) Color(0xFFFED7AA) else if (!reminder.isReadByTutor) Color(0xFFD3BDF2) else Color(0xFFECECEC)
+                                    )
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.Top
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .background(
+                                                                if (isEnrollment) Color(0xFF059669) else if (isTestMarks) Color(0xFFEA580C) else Color(0xFF7C3AED),
+                                                                shape = RoundedCornerShape(6.dp)
+                                                            )
+                                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = if (isEnrollment) "🎉 New Student Enrolled" else if (isTestMarks) "📝 Test Marks Update" else "Parent / Student Query",
+                                                            color = Color.White,
+                                                            fontSize = 9.sp,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                    }
+                                                }
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Text(
+                                                    text = "Student: ${student.name} (Reg No: ${student.slNo})",
+                                                    fontSize = 11.sp,
+                                                    color = Color.DarkGray,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                                Text(
+                                                    text = "Parent Phone: ${student.parentPhone} • Class: ${student.standard}",
+                                                    fontSize = 10.sp,
+                                                    color = Color.Gray
+                                                )
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Text(
+                                                    text = reminder.text,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = if (isEnrollment) Color(0xFF065F46) else if (isTestMarks) Color(0xFF9A3412) else Color.DarkGray
+                                                )
+                                            }
+
+                                            Column(horizontalAlignment = Alignment.End) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    OutlinedButton(
+                                                        onClick = {
+                                                            showRemindersDialog = false
+                                                            onStudentClick(student)
+                                                        },
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                                        modifier = Modifier.height(28.dp)
+                                                    ) {
+                                                        Text("Details", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF423870))
+                                                    }
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    IconButton(
+                                                        onClick = { viewModel.removeReminder(student.slNo, reminder.id) },
+                                                        modifier = Modifier.size(26.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Delete,
+                                                            contentDescription = "Dismiss Notification",
+                                                            tint = Color.Red.copy(alpha = 0.7f),
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                    }
+                                                }
+                                                Spacer(modifier = Modifier.height(6.dp))
+                                                Button(
+                                                    onClick = {
+                                                        showRemindersDialog = false
+                                                        if (isTestMarks) {
+                                                            viewModel.openTestMarksUpdateSms(context, student, reminder)
+                                                        } else if (isEnrollment) {
+                                                            viewModel.openWelcomeSmsForNewStudent(context, student, reminder.id)
+                                                        } else {
+                                                            viewModel.openSmsReplyForStudentReminder(context, student, reminder)
+                                                        }
+                                                    },
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = if (isEnrollment) Color(0xFF059669) else if (isTestMarks) Color(0xFFEA580C) else Color(0xFF7C3AED)
+                                                    ),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                    modifier = Modifier.height(30.dp)
+                                                ) {
+                                                    Icon(Icons.Default.Send, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text(
+                                                        text = if (isTestMarks) "Send Marks SMS" else if (isEnrollment) "Welcome SMS" else "Reply via SMS",
+                                                        fontSize = 10.sp,
+                                                        color = Color.White,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Section 3: Other Tutor Reminders
+                        val tutorReminders = allReminders.filter { !it.second.isByParent }
+                        if (tutorReminders.isNotEmpty()) {
+                            Text(
+                                text = "📌 Tutor Personal Reminders & Notes (${tutorReminders.size}):",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF1E40AF)
+                            )
+                            tutorReminders.forEach { (student, reminder) ->
+                                val isTestMarks = reminder.text.contains("test", ignoreCase = true) ||
+                                        reminder.text.contains("mark", ignoreCase = true) ||
+                                        reminder.text.contains("score", ignoreCase = true) ||
+                                        reminder.text.contains("paper", ignoreCase = true) ||
+                                        reminder.text.contains("exam", ignoreCase = true)
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            if (isTestMarks) {
+                                                viewModel.openTestMarksUpdateSms(context, student, reminder)
+                                                showRemindersDialog = false
+                                            } else {
+                                                showRemindersDialog = false
+                                                onStudentClick(student)
+                                            }
+                                        },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = CardDefaults.cardColors(containerColor = if (isTestMarks) Color(0xFFFFF7ED) else Color.White),
+                                    border = BorderStroke(1.dp, if (isTestMarks) Color(0xFFFED7AA) else Color(0xFFECECEC))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(10.dp).fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "Student: ${student.name} (SL: ${student.slNo})",
+                                                fontSize = 11.sp,
+                                                color = Color.Gray,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            Text(
+                                                text = reminder.text,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = if (isTestMarks) Color(0xFF9A3412) else Color.DarkGray
+                                            )
+                                        }
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    showRemindersDialog = false
+                                                    onStudentClick(student)
+                                                },
+                                                shape = RoundedCornerShape(8.dp),
+                                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                                modifier = Modifier.height(28.dp)
+                                            ) {
+                                                Text("Details", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E40AF))
+                                            }
+                                            IconButton(
+                                                onClick = {
+                                                    showRemindersDialog = false
+                                                    if (isTestMarks) {
+                                                        viewModel.openTestMarksUpdateSms(context, student, reminder)
+                                                    } else {
+                                                        viewModel.openSmsReplyForStudentReminder(context, student, reminder)
+                                                    }
+                                                },
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Send,
+                                                    contentDescription = "Send SMS",
+                                                    tint = if (isTestMarks) Color(0xFFEA580C) else Color(0xFF1E40AF),
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                            IconButton(
+                                                onClick = { viewModel.removeReminder(student.slNo, reminder.id) },
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Delete,
+                                                    contentDescription = "Delete",
+                                                    tint = Color.Red.copy(alpha = 0.7f),
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Empty State if no birthdays and no reminders
+                        if (birthdayStudents.isEmpty() && allReminders.isEmpty()) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -988,109 +1427,11 @@ fun TutorHomeScreen(
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
-                                        text = "No alerts or parent reminders registered right now.",
+                                        text = "No pending reminders, student messages, or birthdays today! All caught up.",
                                         fontSize = 12.sp,
                                         color = Color.Gray,
                                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                     )
-                                }
-                            }
-                        } else {
-                            allReminders.forEach { (student, reminder) ->
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = if (reminder.isByParent && !reminder.isReadByTutor) Color(0xFFF5EFFF) else Color.White
-                                    ),
-                                    border = BorderStroke(
-                                        width = 1.dp,
-                                        color = if (reminder.isByParent && !reminder.isReadByTutor) Color(0xFFD3BDF2) else Color(0xFFECECEC)
-                                    )
-                                ) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.Top
-                                        ) {
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .background(
-                                                                color = if (reminder.isByParent) Color(0xFF7C3AED) else Color(0xFF3B82F6),
-                                                                shape = RoundedCornerShape(6.dp)
-                                                            )
-                                                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                                                    ) {
-                                                        Text(
-                                                            text = if (reminder.isByParent) "Parent" else "Tutor",
-                                                            color = Color.White,
-                                                            fontSize = 9.sp,
-                                                            fontWeight = FontWeight.Bold
-                                                        )
-                                                    }
-                                                    if (reminder.isByParent && !reminder.isReadByTutor) {
-                                                        Spacer(modifier = Modifier.width(6.dp))
-                                                        Box(
-                                                            modifier = Modifier
-                                                                .background(Color(0xFF10B981), shape = RoundedCornerShape(6.dp))
-                                                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                                                        ) {
-                                                            Text(
-                                                                text = "Unread",
-                                                                color = Color.White,
-                                                                fontSize = 9.sp,
-                                                                fontWeight = FontWeight.Bold
-                                                            )
-                                                        }
-                                                    }
-                                                }
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                Text(
-                                                    text = "Student: 🧿 ${student.name} (Reg No: ${student.slNo})",
-                                                    fontSize = 11.sp,
-                                                    color = Color.Gray,
-                                                    fontWeight = FontWeight.SemiBold
-                                                )
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                Text(
-                                                    text = reminder.text,
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    color = Color.DarkGray
-                                                )
-                                            }
-
-                                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                if (reminder.isByParent && !reminder.isReadByTutor) {
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    IconButton(
-                                                        onClick = { viewModel.markReminderReadByTutor(student.slNo, reminder.id) },
-                                                        modifier = Modifier.size(28.dp)
-                                                    ) {
-                                                        Icon(
-                                                            imageVector = Icons.Default.CheckCircle,
-                                                            contentDescription = "Mark Read",
-                                                            tint = Color(0xFF10B981),
-                                                            modifier = Modifier.size(18.dp)
-                                                        )
-                                                    }
-                                                }
-                                                IconButton(
-                                                    onClick = { viewModel.removeReminder(student.slNo, reminder.id) },
-                                                    modifier = Modifier.size(28.dp)
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Delete,
-                                                        contentDescription = "Delete",
-                                                        tint = Color.Red.copy(alpha = 0.7f),
-                                                        modifier = Modifier.size(18.dp)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
                                 }
                             }
                         }
@@ -1155,11 +1496,13 @@ fun AttendanceDatewiseItem(
     date: String,
     presentCount: Int,
     totalCount: Int,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
+            .widthIn(max = 680.dp)
             .clickable { onClick() }
             .padding(horizontal = 24.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1438,7 +1781,7 @@ fun TutorStudentListScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "🧿 " + s.name,
+                                        text = s.name,
                                         style = MaterialTheme.typography.bodyLarge,
                                         fontWeight = FontWeight.Bold,
                                         color = Color.DarkGray
@@ -1489,6 +1832,16 @@ fun TutorStudentListScreen(
                                 }
                             }
                             HorizontalDivider(color = Color(0xFFF3F1FA), modifier = Modifier.padding(horizontal = 24.dp))
+                        }
+
+                        item {
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = "🧿",
+                                fontSize = 16.sp,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 80.dp)
+                            )
                         }
                     }
                 }
@@ -1775,7 +2128,7 @@ fun TutorAttendanceScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "🧿 " + s.name,
+                                text = s.name,
                                 style = MaterialTheme.typography.bodyLarge,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color.DarkGray,
@@ -1838,6 +2191,16 @@ fun TutorAttendanceScreen(
                             }
                         }
                         HorizontalDivider(color = Color(0xFFF3F1FA), modifier = Modifier.padding(horizontal = 24.dp))
+                    }
+
+                    item {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "🧿",
+                            fontSize = 16.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
+                        )
                     }
                 }
             }
@@ -1926,27 +2289,66 @@ fun TutorRemindersScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
-                                modifier = Modifier.padding(10.dp).fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 12.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column {
-                                    Text("$demosCount", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, color = Color(0xFF7C3AED))
-                                    Text("Demos", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                // Minus on left side
+                                Box(
+                                    modifier = Modifier
+                                        .requiredSize(28.dp)
+                                        .background(Color.White, CircleShape)
+                                        .border(1.dp, Color(0xFFDDD2FF), CircleShape)
+                                        .clickable { viewModel.updateDemosCount(-1) }
+                                        .testTag("reminders_minus_demos"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "-",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 18.sp,
+                                        color = Color(0xFF7C3AED),
+                                        textAlign = TextAlign.Center
+                                    )
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    IconButton(
-                                        onClick = { viewModel.updateDemosCount(-1) },
-                                        modifier = Modifier.size(24.dp).background(Color.White, CircleShape)
-                                    ) {
-                                        Icon(Icons.Default.Remove, contentDescription = "Decrement", tint = Color(0xFF7C3AED), modifier = Modifier.size(12.dp))
-                                    }
-                                    IconButton(
-                                        onClick = { viewModel.updateDemosCount(1) },
-                                        modifier = Modifier.size(24.dp).background(Color(0xFF7C3AED), CircleShape)
-                                    ) {
-                                        Icon(Icons.Default.Add, contentDescription = "Increment", tint = Color.White, modifier = Modifier.size(12.dp))
-                                    }
+
+                                // Center Column: Count + Label
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        text = "$demosCount",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = Color(0xFF7C3AED)
+                                    )
+                                    Text(
+                                        text = "Demos",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color.Gray,
+                                        maxLines = 1
+                                    )
+                                }
+
+                                // Plus on right side
+                                Box(
+                                    modifier = Modifier
+                                        .requiredSize(28.dp)
+                                        .background(Color(0xFF7C3AED), CircleShape)
+                                        .clickable { viewModel.updateDemosCount(1) }
+                                        .testTag("reminders_plus_demos"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "+",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 18.sp,
+                                        color = Color.White,
+                                        textAlign = TextAlign.Center
+                                    )
                                 }
                             }
                         }
@@ -1958,34 +2360,73 @@ fun TutorRemindersScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
-                                modifier = Modifier.padding(10.dp).fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 12.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column {
-                                    Text("$checkedInsCount", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, color = Color(0xFF5138B8))
-                                    Text("Checked-ins", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                // Minus on left side
+                                Box(
+                                    modifier = Modifier
+                                        .requiredSize(28.dp)
+                                        .background(Color.White, CircleShape)
+                                        .border(1.dp, Color(0xFFC4B5FD), CircleShape)
+                                        .clickable { viewModel.updateCheckedInsCount(-1) }
+                                        .testTag("reminders_minus_checkedins"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "-",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 18.sp,
+                                        color = Color(0xFF5138B8),
+                                        textAlign = TextAlign.Center
+                                    )
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    IconButton(
-                                        onClick = { viewModel.updateCheckedInsCount(-1) },
-                                        modifier = Modifier.size(24.dp).background(Color.White, CircleShape)
-                                    ) {
-                                        Icon(Icons.Default.Remove, contentDescription = "Decrement", tint = Color(0xFF5138B8), modifier = Modifier.size(12.dp))
-                                    }
-                                    IconButton(
-                                        onClick = { viewModel.updateCheckedInsCount(1) },
-                                        modifier = Modifier.size(24.dp).background(Color(0xFF5138B8), CircleShape)
-                                    ) {
-                                        Icon(Icons.Default.Add, contentDescription = "Increment", tint = Color.White, modifier = Modifier.size(12.dp))
-                                    }
+
+                                // Center Column: Count + Label
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        text = "$checkedInsCount",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = Color(0xFF5138B8)
+                                    )
+                                    Text(
+                                        text = "Checked-ins",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color.Gray,
+                                        maxLines = 1
+                                    )
+                                }
+
+                                // Plus on right side
+                                Box(
+                                    modifier = Modifier
+                                        .requiredSize(28.dp)
+                                        .background(Color(0xFF5138B8), CircleShape)
+                                        .clickable { viewModel.updateCheckedInsCount(1) }
+                                        .testTag("reminders_plus_checkedins"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "+",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 18.sp,
+                                        color = Color.White,
+                                        textAlign = TextAlign.Center
+                                    )
                                 }
                             }
                         }
                     }
 
                     Column(
-                        modifier = Modifier.weight(1.2f),
+                        modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         // Card 2: Enquiries
@@ -1995,27 +2436,66 @@ fun TutorRemindersScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
-                                modifier = Modifier.padding(10.dp).fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 12.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column {
-                                    Text("$enquiriesCount", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, color = Color(0xFF63569B))
-                                    Text("Enquiries", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                // Minus on left side
+                                Box(
+                                    modifier = Modifier
+                                        .requiredSize(28.dp)
+                                        .background(Color.White, CircleShape)
+                                        .border(1.dp, Color(0xFFDDD2FF), CircleShape)
+                                        .clickable { viewModel.updateEnquiriesCount(-1) }
+                                        .testTag("reminders_minus_enquiries"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "-",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 18.sp,
+                                        color = Color(0xFF63569B),
+                                        textAlign = TextAlign.Center
+                                    )
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    IconButton(
-                                        onClick = { viewModel.updateEnquiriesCount(-1) },
-                                        modifier = Modifier.size(24.dp).background(Color.White, CircleShape)
-                                    ) {
-                                        Icon(Icons.Default.Remove, contentDescription = "Decrement", tint = Color(0xFF63569B), modifier = Modifier.size(12.dp))
-                                    }
-                                    IconButton(
-                                        onClick = { viewModel.updateEnquiriesCount(1) },
-                                        modifier = Modifier.size(24.dp).background(Color(0xFF63569B), CircleShape)
-                                    ) {
-                                        Icon(Icons.Default.Add, contentDescription = "Increment", tint = Color.White, modifier = Modifier.size(12.dp))
-                                    }
+
+                                // Center Column: Count + Label
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        text = "$enquiriesCount",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = Color(0xFF63569B)
+                                    )
+                                    Text(
+                                        text = "Enquiries",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color.Gray,
+                                        maxLines = 1
+                                    )
+                                }
+
+                                // Plus on right side
+                                Box(
+                                    modifier = Modifier
+                                        .requiredSize(28.dp)
+                                        .background(Color(0xFF63569B), CircleShape)
+                                        .clickable { viewModel.updateEnquiriesCount(1) }
+                                        .testTag("reminders_plus_enquiries"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "+",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 18.sp,
+                                        color = Color.White,
+                                        textAlign = TextAlign.Center
+                                    )
                                 }
                             }
                         }
@@ -2028,27 +2508,66 @@ fun TutorRemindersScreen(
                             border = BorderStroke(1.dp, Color(0xFFEFE8FC))
                         ) {
                             Row(
-                                modifier = Modifier.padding(10.dp).fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 12.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column {
-                                    Text("$unitTestsCount", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, color = Color(0xFF8B5CF6))
-                                    Text("Unit Tests", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                // Minus on left side
+                                Box(
+                                    modifier = Modifier
+                                        .requiredSize(28.dp)
+                                        .background(Color.White, CircleShape)
+                                        .border(1.dp, Color(0xFFE9D5FF), CircleShape)
+                                        .clickable { viewModel.updateUnitTestsCount(-1) }
+                                        .testTag("reminders_minus_unittests"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "-",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 18.sp,
+                                        color = Color(0xFF8B5CF6),
+                                        textAlign = TextAlign.Center
+                                    )
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    IconButton(
-                                        onClick = { viewModel.updateUnitTestsCount(-1) },
-                                        modifier = Modifier.size(24.dp).background(Color.White, CircleShape)
-                                    ) {
-                                        Icon(Icons.Default.Remove, contentDescription = "Decrement", tint = Color(0xFF8B5CF6), modifier = Modifier.size(12.dp))
-                                    }
-                                    IconButton(
-                                        onClick = { viewModel.updateUnitTestsCount(1) },
-                                        modifier = Modifier.size(24.dp).background(Color(0xFF8B5CF6), CircleShape)
-                                    ) {
-                                        Icon(Icons.Default.Add, contentDescription = "Increment", tint = Color.White, modifier = Modifier.size(12.dp))
-                                    }
+
+                                // Center Column: Count + Label
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        text = "$unitTestsCount",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = Color(0xFF8B5CF6)
+                                    )
+                                    Text(
+                                        text = "Unit Tests",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color.Gray,
+                                        maxLines = 1
+                                    )
+                                }
+
+                                // Plus on right side
+                                Box(
+                                    modifier = Modifier
+                                        .requiredSize(28.dp)
+                                        .background(Color(0xFF8B5CF6), CircleShape)
+                                        .clickable { viewModel.updateUnitTestsCount(1) }
+                                        .testTag("reminders_plus_unittests"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "+",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 18.sp,
+                                        color = Color.White,
+                                        textAlign = TextAlign.Center
+                                    )
                                 }
                             }
                         }
@@ -2305,7 +2824,7 @@ fun TutorRemindersScreen(
                                                         onCheckedChange = null
                                                     )
                                                     Spacer(modifier = Modifier.width(8.dp))
-                                                    Text("🧿 " + s.name)
+                                                    Text(s.name)
                                                 }
                                             },
                                             onClick = {
@@ -2379,7 +2898,7 @@ fun TutorRemindersScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text("🧿 " + student.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall, color = Color(0xFF7C3AED))
+                                    Text(student.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall, color = Color(0xFF7C3AED))
                                     Text(r.text, style = MaterialTheme.typography.bodyMedium, color = Color.DarkGray)
                                 }
                                 IconButton(
@@ -2461,7 +2980,7 @@ fun TutorRemindersScreen(
                                                         onCheckedChange = null
                                                     )
                                                     Spacer(modifier = Modifier.width(8.dp))
-                                                    Text("🧿 " + s.name)
+                                                    Text(s.name)
                                                 }
                                             },
                                             onClick = {
@@ -2563,7 +3082,7 @@ fun TutorRemindersScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(targetStudent?.name?.let { "🧿 $it" } ?: "Student Sl: ${sched.studentSlNo}", fontWeight = FontWeight.Bold)
+                                    Text(targetStudent?.name ?: "Student Sl: ${sched.studentSlNo}", fontWeight = FontWeight.Bold)
                                     Text(sched.topic, style = MaterialTheme.typography.bodyMedium)
                                     Text("Time: ${sched.time} (${sched.durationMinutes} mins)", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
                                 }
@@ -2641,14 +3160,310 @@ fun TutorRemindersScreen(
                         }
                     }
                 }
+
+                item {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "🧿",
+                        fontSize = 16.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
+                    )
+                }
             }
         }
     }
 }
 
 // ==========================================
-// 5. FEES LEDGER VIEW
+// 5. FEES LEDGER VIEW (REDESIGNED)
 // ==========================================
+@Composable
+fun EvilEyeEmblem(modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier.size(22.dp)) {
+        val r = size.minDimension / 2
+        // Outer cyan ring
+        drawCircle(color = Color(0xFF38BDF8), radius = r)
+        // White ring
+        drawCircle(color = Color.White, radius = r * 0.72f)
+        // Deep Navy iris
+        drawCircle(color = Color(0xFF1E3A8A), radius = r * 0.45f)
+        // Dark pupil
+        drawCircle(color = Color(0xFF0F172A), radius = r * 0.28f)
+        // Glint highlight
+        drawCircle(
+            color = Color.White,
+            radius = r * 0.10f,
+            center = center.copy(x = center.x - r * 0.08f, y = center.y - r * 0.08f)
+        )
+    }
+}
+
+@Composable
+fun StudentLedgerCard(
+    student: Student,
+    selectedMonth: String,
+    viewModel: MainViewModel,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val isPaidInitial = viewModel.getStudentFeePaidForMonth(student, selectedMonth)
+    var isPaid by remember(student.slNo, selectedMonth, student.isFeesPaid) { mutableStateOf(isPaidInitial) }
+    var tuitionText by remember(student.slNo, student.tuitionFee) { mutableStateOf(student.tuitionFee.toInt().toString()) }
+    var dueText by remember(student.slNo, student.dueAmount) { mutableStateOf(student.dueAmount.toInt().toString()) }
+    var demoText by remember(student.slNo, student.demoFee) { mutableStateOf(student.demoFee.toInt().toString()) }
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .widthIn(max = 680.dp)
+            .padding(horizontal = 16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, Color(0xFFEBE4F9)),
+        shape = RoundedCornerShape(18.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Header Row: Eye icon, Name, SL No, Grade & Paid? Checkbox
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = student.name,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 19.sp,
+                        color = Color(0xFF0F172A)
+                    )
+                    Text(
+                        text = "SL No: ${student.slNo} • Grade: ${student.standard.ifBlank { "N/A" }}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF64748B)
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Paid?",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF1E293B)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Checkbox(
+                        checked = isPaid,
+                        onCheckedChange = { checked ->
+                            isPaid = checked
+                            if (checked) {
+                                dueText = "0"
+                            } else if (dueText == "0" || dueText.isBlank()) {
+                                dueText = tuitionText
+                            }
+                        },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = Color(0xFF6D28D9),
+                            uncheckedColor = Color(0xFF94A3B8)
+                        ),
+                        modifier = Modifier.testTag("pay_checkbox_${student.slNo}")
+                    )
+                }
+            }
+
+            // Input Fields Row: Tuition, Due, Demos
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // 1. Tuition Input
+                androidx.compose.material3.OutlinedTextField(
+                    value = tuitionText,
+                    onValueChange = { tuitionText = it },
+                    label = { Text("Tuition", fontSize = 11.sp) },
+                    placeholder = { Text("0") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF6D28D9),
+                        unfocusedBorderColor = Color(0xFFCBD5E1),
+                        focusedContainerColor = Color.White,
+                        unfocusedContainerColor = Color.White,
+                        focusedLabelColor = Color(0xFF6D28D9),
+                        unfocusedLabelColor = Color(0xFF64748B)
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("tuition_box_${student.slNo}")
+                )
+
+                // 2. Due Input (Directly connected to Parent dashboard)
+                androidx.compose.material3.OutlinedTextField(
+                    value = dueText,
+                    onValueChange = { dueText = it },
+                    label = { Text("Due", fontSize = 11.sp) },
+                    placeholder = { Text("0") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF6D28D9),
+                        unfocusedBorderColor = Color(0xFFCBD5E1),
+                        focusedContainerColor = Color.White,
+                        unfocusedContainerColor = Color.White,
+                        focusedLabelColor = Color(0xFF6D28D9),
+                        unfocusedLabelColor = Color(0xFF64748B)
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("due_box_${student.slNo}")
+                )
+
+                // 3. Demos Pill Box (Editable demo amount with '-' and '+' buttons)
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF3E8FF)),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color(0xFFEDE0FF)),
+                    modifier = Modifier.weight(1.3f)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        val currentDemoVal = demoText.toDoubleOrNull() ?: student.demoFee
+                        Text(
+                            text = "Demos: ₹${currentDemoVal.toInt()}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF6D28D9),
+                            maxLines = 1
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp)
+                        ) {
+                            // Circular Minus Button (28.dp)
+                            Box(
+                                modifier = Modifier
+                                    .requiredSize(28.dp)
+                                    .background(Color.White, CircleShape)
+                                    .border(1.dp, Color(0xFFE2D6FF), CircleShape)
+                                    .clickable {
+                                        val cur = demoText.toDoubleOrNull() ?: student.demoFee
+                                        val next = (cur - 500.0).coerceAtLeast(0.0)
+                                        demoText = next.toInt().toString()
+                                    }
+                                    .testTag("minus_demo_${student.slNo}"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "-",
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFDC2626),
+                                    fontSize = 18.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+
+                            // Center Editable Demo Amount
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center,
+                                modifier = Modifier
+                                    .padding(horizontal = 2.dp)
+                                    .background(Color.White, RoundedCornerShape(6.dp))
+                                    .border(1.dp, Color(0xFFE2D6FF), RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "₹",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1E1B4B)
+                                )
+                                BasicTextField(
+                                    value = demoText,
+                                    onValueChange = { demoText = it.filter { c -> c.isDigit() } },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    singleLine = true,
+                                    textStyle = TextStyle(
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF1E1B4B),
+                                        textAlign = TextAlign.Center
+                                    ),
+                                    modifier = Modifier
+                                        .widthIn(min = 16.dp, max = 36.dp)
+                                        .testTag("demo_input_${student.slNo}")
+                                )
+                            }
+
+                            // Circular Plus Button (28.dp)
+                            Box(
+                                modifier = Modifier
+                                    .requiredSize(28.dp)
+                                    .background(Color(0xFF6D28D9), CircleShape)
+                                    .clickable {
+                                        val cur = demoText.toDoubleOrNull() ?: student.demoFee
+                                        val next = cur + 500.0
+                                        demoText = next.toInt().toString()
+                                    }
+                                    .testTag("plus_demo_${student.slNo}"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "+",
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    fontSize = 18.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Bottom ENTER Button
+            Button(
+                onClick = {
+                    val tuition = tuitionText.toDoubleOrNull() ?: student.tuitionFee
+                    val due = dueText.toDoubleOrNull() ?: 0.0
+                    val demo = demoText.toDoubleOrNull() ?: student.demoFee
+                    viewModel.saveStudentLedgerEntry(
+                        studentSlNo = student.slNo,
+                        month = selectedMonth,
+                        tuitionFee = tuition,
+                        dueAmount = due,
+                        demoFee = demo,
+                        isPaid = isPaid
+                    )
+                    Toast.makeText(context, "${student.name} updated: Due ₹${due.toInt()}, Tuition ₹${tuition.toInt()}", Toast.LENGTH_SHORT).show()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5B21B6)),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .testTag("enter_btn_${student.slNo}")
+            ) {
+                Text(
+                    text = "ENTER",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = Color.White,
+                    letterSpacing = 1.sp
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun TutorFeesScreen(
     studentsList: List<Student>,
@@ -2673,7 +3488,7 @@ fun TutorFeesScreen(
 
     val demosCount by viewModel.demosCount.collectAsState()
 
-    // Dynamic summary calculations based on selected month
+    // Dynamic summary calculations based on selected month & student dues
     var totalTuitionEarned = 0.0
     var totalDues = 0.0
 
@@ -2681,7 +3496,10 @@ fun TutorFeesScreen(
         val isPaid = viewModel.getStudentFeePaidForMonth(s, selectedMonth)
         if (isPaid) {
             totalTuitionEarned += s.tuitionFee
-        } else {
+        }
+        if (s.dueAmount > 0.0) {
+            totalDues += s.dueAmount
+        } else if (!isPaid) {
             totalDues += s.tuitionFee
         }
     }
@@ -2707,16 +3525,20 @@ fun TutorFeesScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
+            horizontalAlignment = Alignment.CenterHorizontally,
             contentPadding = PaddingValues(bottom = 32.dp, top = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // Summary Card Board
             item {
                 Card(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF6F3FF)),
-                    border = BorderStroke(1.dp, Color(0xFFECE6FF))
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 680.dp)
+                        .padding(horizontal = 16.dp),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F6FD)),
+                    border = BorderStroke(1.dp, Color(0xFFEBE4F9))
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(
@@ -2729,14 +3551,14 @@ fun TutorFeesScreen(
                                     "Financial Summary Sheet",
                                     fontWeight = FontWeight.Bold,
                                     style = MaterialTheme.typography.titleMedium,
-                                    color = Color(0xFF4A3E7D)
+                                    color = Color(0xFF1E1B4B)
                                 )
                                 Box {
                                     Row(
                                         modifier = Modifier
                                             .clickable { showMonthDropdown = true }
-                                            .background(Color(0xFFEDE9FE), RoundedCornerShape(8.dp))
-                                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                                            .background(Color(0xFFEDE7FA), RoundedCornerShape(8.dp))
+                                            .padding(horizontal = 10.dp, vertical = 5.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
@@ -2744,12 +3566,12 @@ fun TutorFeesScreen(
                                             text = viewModel.formatMonthYear(selectedMonth),
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 12.sp,
-                                            color = Color(0xFF7C3AED)
+                                            color = Color(0xFF5B21B6)
                                         )
                                         Icon(
                                             imageVector = Icons.Default.ArrowDropDown,
                                             contentDescription = "Select Month",
-                                            tint = Color(0xFF7C3AED),
+                                            tint = Color(0xFF5B21B6),
                                             modifier = Modifier.size(16.dp)
                                         )
                                     }
@@ -2776,122 +3598,141 @@ fun TutorFeesScreen(
                                         clipboardManager.setText(AnnotatedString(logResult.substringBefore("\nCopy")))
                                         Toast.makeText(context, "$logResult", Toast.LENGTH_SHORT).show()
                                     },
-                                    shape = RoundedCornerShape(10.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6D28D9)),
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                                     modifier = Modifier.testTag("download_ledger_btn")
                                 ) {
                                     Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Text", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Text("Text", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                 }
                                 Button(
                                     onClick = {
                                         val logResult = viewModel.downloadLedgerExcelForMonth(context, selectedMonth)
                                         Toast.makeText(context, "$logResult", Toast.LENGTH_SHORT).show()
                                     },
-                                    shape = RoundedCornerShape(10.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                                     modifier = Modifier.testTag("download_ledger_excel_btn")
                                 ) {
                                     Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Excel", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Text("Excel", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                 }
                             }
                         }
 
                         Spacer(modifier = Modifier.height(14.dp))
 
-                        // Grid metrics layout
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
+                        // 2x2 Grid metrics layout matching design
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            // Row 1: Tuition Earned & Tuition Dues
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Card(
                                     colors = CardDefaults.cardColors(containerColor = Color.White),
-                                    shape = RoundedCornerShape(10.dp),
-                                    border = BorderStroke(1.dp, Color(0xFFEFEAFF)),
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, Color(0xFFEBE4F9)),
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Column(modifier = Modifier.padding(10.dp)) {
-                                        Text("Tuition Earned", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text("Tuition Earned", style = MaterialTheme.typography.labelSmall, color = Color(0xFF475569))
+                                        Spacer(modifier = Modifier.height(2.dp))
                                         Text(
                                             "₹${totalTuitionEarned.toInt()}",
                                             fontWeight = FontWeight.Bold,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            color = Color(0xFF7C3AED)
+                                            fontSize = 18.sp,
+                                            color = Color(0xFF5B21B6)
                                         )
                                     }
                                 }
                                 Card(
                                     colors = CardDefaults.cardColors(containerColor = Color.White),
-                                    shape = RoundedCornerShape(10.dp),
-                                    border = BorderStroke(1.dp, Color(0xFFEFEAFF)),
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, Color(0xFFEBE4F9)),
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Column(modifier = Modifier.padding(10.dp)) {
-                                        Text("Tuition Dues", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text("Tuition Dues", style = MaterialTheme.typography.labelSmall, color = Color(0xFF475569))
+                                        Spacer(modifier = Modifier.height(2.dp))
                                         Text(
                                             "₹${totalDues.toInt()}",
                                             fontWeight = FontWeight.Bold,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            color = Color(0xFFEF4444)
+                                            fontSize = 18.sp,
+                                            color = Color(0xFFC2410C)
                                         )
                                     }
                                 }
                             }
+                            // Row 2: Demos Earned & Net Earnings
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Card(
                                     colors = CardDefaults.cardColors(containerColor = Color.White),
-                                    shape = RoundedCornerShape(10.dp),
-                                    border = BorderStroke(1.dp, Color(0xFFEFEAFF)),
-                                    modifier = Modifier.weight(1.5f)
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, Color(0xFFEBE4F9)),
+                                    modifier = Modifier.weight(1.35f)
                                 ) {
-                                    Column(modifier = Modifier.padding(10.dp)) {
-                                        Text("Demos Earned (${demosCount})", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(8.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        // Red circular minus button (36.dp)
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .background(Color(0xFFE53935), CircleShape)
+                                                .clickable { viewModel.updateDemosCount(-1) }
+                                                .testTag("summary_minus_demo_btn"),
+                                            contentAlignment = Alignment.Center
                                         ) {
+                                            Text("-", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp, textAlign = TextAlign.Center)
+                                        }
+
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text(
+                                                "Demos Earned (${demosCount})",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFF475569)
+                                            )
                                             Text(
                                                 "₹${totalDemoFees.toInt()}",
                                                 fontWeight = FontWeight.Bold,
-                                                style = MaterialTheme.typography.titleMedium,
-                                                color = Color(0xFF7C3AED)
+                                                fontSize = 18.sp,
+                                                color = Color(0xFF5B21B6)
                                             )
-                                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                IconButton(
-                                                    onClick = { viewModel.updateDemosCount(-1) },
-                                                    modifier = Modifier.size(24.dp).background(Color(0xFFEDE9FE), CircleShape)
-                                                ) {
-                                                    Icon(Icons.Default.Remove, contentDescription = "Decrement", tint = Color(0xFF7C3AED), modifier = Modifier.size(12.dp))
-                                                }
-                                                IconButton(
-                                                    onClick = { viewModel.updateDemosCount(1) },
-                                                    modifier = Modifier.size(24.dp).background(Color(0xFF7C3AED), CircleShape)
-                                                ) {
-                                                    Icon(Icons.Default.Add, contentDescription = "Increment", tint = Color.White, modifier = Modifier.size(12.dp))
-                                                }
-                                            }
+                                        }
+
+                                        // Purple circular plus button (36.dp)
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .background(Color(0xFF6D28D9), CircleShape)
+                                                .clickable { viewModel.updateDemosCount(1) }
+                                                .testTag("summary_plus_demo_btn"),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text("+", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp, textAlign = TextAlign.Center)
                                         }
                                     }
                                 }
                                 Card(
                                     colors = CardDefaults.cardColors(containerColor = Color.White),
-                                    shape = RoundedCornerShape(10.dp),
-                                    border = BorderStroke(1.dp, Color(0xFFEFEAFF)),
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, Color(0xFFEBE4F9)),
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Column(modifier = Modifier.padding(10.dp)) {
-                                        Text("Net Earnings", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text("Net Earnings", style = MaterialTheme.typography.labelSmall, color = Color(0xFF475569))
+                                        Spacer(modifier = Modifier.height(2.dp))
                                         Text(
                                             "₹${netEarnings.toInt()}",
                                             fontWeight = FontWeight.Bold,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            color = Color(0xFF7C3AED)
+                                            fontSize = 18.sp,
+                                            color = Color(0xFF5B21B6)
                                         )
                                     }
                                 }
@@ -2902,143 +3743,47 @@ fun TutorFeesScreen(
             }
 
             item {
-                Text(
-                    "Spreadsheet Inputs Matrix:",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.DarkGray,
-                    modifier = Modifier.padding(horizontal = 24.dp)
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 680.dp)
+                        .padding(start = 20.dp, end = 20.dp, top = 4.dp)
+                ) {
+                    Text(
+                        text = "Spreadsheet Inputs Matrix:",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = Color(0xFF0F172A)
+                    )
+                }
             }
 
             if (studentsList.isEmpty()) {
                 item {
-                    Text("No student records available.", modifier = Modifier.padding(horizontal = 24.dp))
+                    Text(
+                        "No student records available.",
+                        color = Color.Gray,
+                        modifier = Modifier.padding(horizontal = 24.dp)
+                    )
                 }
             } else {
-                items(studentsList) { s ->
-                    var tempFeeText by remember(s.slNo) { mutableStateOf(s.tuitionFee.toInt().toString()) }
-
-                    Card(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        border = BorderStroke(1.dp, Color(0xFFECE5FF)),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column {
-                                    Text("🧿 " + s.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge, color = Color.DarkGray)
-                                    Text("SL No: ${s.slNo} • Grade: ${s.standard}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                                }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Paid?", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = Color.Gray)
-                                    Checkbox(
-                                        checked = viewModel.getStudentFeePaidForMonth(s, selectedMonth),
-                                        onCheckedChange = { isChecked ->
-                                            val f = tempFeeText.toDoubleOrNull() ?: s.tuitionFee
-                                            viewModel.updateStudentPaymentForMonth(s.slNo, selectedMonth, isChecked, f)
-                                        },
-                                        modifier = Modifier.testTag("pay_checkbox_${s.slNo}")
-                                    )
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                // Tuition Input
-                                androidx.compose.material3.OutlinedTextField(
-                                    value = tempFeeText,
-                                    onValueChange = { newValue ->
-                                        tempFeeText = newValue
-                                        val f = newValue.toDoubleOrNull() ?: 0.0
-                                        val isPaid = viewModel.getStudentFeePaidForMonth(s, selectedMonth)
-                                        viewModel.updateStudentPaymentForMonth(s.slNo, selectedMonth, isPaid, f)
-                                    },
-                                    placeholder = { Text("Tuition Fee") },
-                                    label = { Text("Tuition") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    singleLine = true,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("tuition_box_${s.slNo}"),
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-
-                                var tempDueText by remember(s.slNo) { mutableStateOf(s.dueAmount.toInt().toString()) }
-                                androidx.compose.material3.OutlinedTextField(
-                                    value = tempDueText,
-                                    onValueChange = { newValue ->
-                                        tempDueText = newValue
-                                        val d = newValue.toDoubleOrNull() ?: 0.0
-                                        viewModel.updateStudentDueAmount(s.slNo, d)
-                                    },
-                                    placeholder = { Text("Due Amount") },
-                                    label = { Text("Due") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    singleLine = true,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("due_box_${s.slNo}"),
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-
-                                // Demo columns controls
-                                Column(
-                                    modifier = Modifier
-                                        .background(
-                                            Color(0xFFF3E8FF),
-                                            shape = RoundedCornerShape(10.dp)
-                                        ).padding(horizontal = 8.dp, vertical = 6.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Text("Demos: ₹${s.demoFee.toInt()}", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF7C3AED))
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        IconButton(
-                                            onClick = { viewModel.modifyDemoFee(s.slNo, isIncrement = false) },
-                                            modifier = Modifier.size(28.dp).testTag("demo_minus_${s.slNo}"),
-                                            colors = IconButtonDefaults.iconButtonColors(containerColor = Color.White)
-                                        ) {
-                                            Text("-", fontWeight = FontWeight.Bold, color = Color.Red, fontSize = 12.sp)
-                                        }
-                                        Text("₹500", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                                        IconButton(
-                                            onClick = { viewModel.modifyDemoFee(s.slNo, isIncrement = true) },
-                                            modifier = Modifier.size(28.dp).testTag("demo_plus_${s.slNo}"),
-                                            colors = IconButtonDefaults.iconButtonColors(containerColor = Color(0xFF7C3AED))
-                                        ) {
-                                            Text("+", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 12.sp)
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Dynamic Dues displays
-                            if (!s.isFeesPaid && s.dueAmount > 0.0) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    "Pending Outstanding Due: ₹${s.dueAmount.toInt()}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Color(0xFFEF4444),
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
+                items(studentsList, key = { it.slNo }) { s ->
+                    StudentLedgerCard(
+                        student = s,
+                        selectedMonth = selectedMonth,
+                        viewModel = viewModel
+                    )
                 }
+            }
+
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "🧿",
+                    fontSize = 16.sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
+                )
             }
         }
     }
@@ -3332,7 +4077,7 @@ fun MarksLineChart(
 }
 
 @Composable
-fun AttendanceDonutChart(presentPercent: Float, attendedDays: Int, totalDaysInMonth: Int = 30) {
+fun AttendanceDonutChart(presentPercent: Float, totalDays: Int) {
     val present = presentPercent.coerceIn(0f, 1f)
     val absent = 1.0f - present
 
@@ -3357,8 +4102,8 @@ fun AttendanceDonutChart(presentPercent: Float, attendedDays: Int, totalDaysInMo
                 modifier = Modifier.align(Alignment.Start)
             )
             Text(
-                "$attendedDays / $totalDaysInMonth Days Present",
-                style = MaterialTheme.typography.titleMedium,
+                "$totalDays",
+                style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF1F2937),
                 modifier = Modifier.align(Alignment.Start)
@@ -3530,16 +4275,9 @@ fun StudentDetailOverlay(
 
     val subjects = student.getSubjects()
     val attendance = student.getAttendance()
-    val cal = java.util.Calendar.getInstance()
-    val daysInMonth = cal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
-    val currentMonthKey = java.text.SimpleDateFormat("yyyy-MM", java.util.Locale.getDefault()).format(cal.time)
-    val monthAttendance = attendance.filterKeys { it.startsWith(currentMonthKey) && !it.startsWith("fee_") }
-    val presentDays = if (monthAttendance.isNotEmpty()) {
-        monthAttendance.count { it.value }
-    } else {
-        attendance.filterKeys { !it.startsWith("fee_") }.count { it.value }
-    }
-    val attendancePct = (presentDays.toFloat() / daysInMonth.toFloat()).coerceIn(0f, 1f)
+    val presentDays = attendance.count { it.value }
+    val totalDays = attendance.size.coerceAtLeast(1)
+    val attendancePct = presentDays.toFloat() / totalDays.toFloat()
 
     val avgScorePct = if (subjects.isNotEmpty()) {
         (subjects.map { it.marks / it.maxMarks }.average() * 100).toInt()
@@ -3793,7 +4531,7 @@ fun StudentDetailOverlay(
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Column(modifier = Modifier.padding(14.dp)) {
-                                        Text("$presentDays/$daysInMonth", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color(0xFFEC4899))
+                                        Text("$presentDays/$totalDays", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color(0xFFEC4899))
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             Icon(imageVector = Icons.Default.FactCheck, contentDescription = null, modifier = Modifier.size(12.dp), tint = Color.Gray)
@@ -3920,7 +4658,7 @@ fun StudentDetailOverlay(
                                                 horizontalArrangement = Arrangement.SpaceBetween,
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                Text("Subject-wise Marks Breakdown :", fontWeight = FontWeight.Bold, color = Color(0xFF32236F), style = MaterialTheme.typography.bodyMedium)
+                                                Text("Subject-wise Marks Visual (All Chosen Subjects):", fontWeight = FontWeight.Bold, color = Color(0xFF32236F), style = MaterialTheme.typography.bodyMedium)
                                                 if (studentChosenSubjects.isNotEmpty()) {
                                                     Text("${studentChosenSubjects.size} Subjects", fontSize = 11.sp, color = Color(0xFF7C3AED), fontWeight = FontWeight.Bold)
                                                 }
@@ -3972,7 +4710,7 @@ fun StudentDetailOverlay(
                                                                         fontSize = 14.sp
                                                                     )
                                                                     Text(
-                                                                        text = if (isExpanded) "Tap to collapse" else "Tap to view subject marks and evaluation history",
+                                                                        text = if (isExpanded) "Tap to collapse" else "Tap to view subject marks visual",
                                                                         fontSize = 10.sp,
                                                                         color = Color.Gray
                                                                     )
@@ -4102,7 +4840,7 @@ fun StudentDetailOverlay(
 
                                 1 -> {
                                     // SECTION 2: ATTENDANCE CHANNELS & CALENDAR WITH ATTENDANCE LOG
-                                    AttendanceDonutChart(attendancePct, presentDays, daysInMonth)
+                                    AttendanceDonutChart(attendancePct, presentDays)
 
                                     ParentAttendanceCalendar(attendance = attendance)
 
@@ -4492,10 +5230,7 @@ fun StudentDetailOverlay(
 
                                 Button(
                                     onClick = {
-                                        val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$parentPhoneToContact")).apply {
-                                            putExtra("sms_body", "Hello, regarding student ${student.name}.")
-                                        }
-                                        context.startActivity(intent)
+                                        viewModel.openSmsApp(context, parentPhoneToContact, "Hello, regarding student ${student.name}.")
                                     },
                                     modifier = Modifier.weight(1f).testTag("message_button_${student.slNo}"),
                                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3B82F6)),
@@ -4694,10 +5429,8 @@ fun StudentDetailOverlay(
                                     viewModel.uploadTestPaper(student.slNo, subjectUploaded, scoreVal, scoreMax, finalUri)
                                     viewModel.addTestScore(student.slNo, subjectUploaded, scoreVal, scoreMax, "Co-Upload")
 
-                                    // Send SMS notification to parent
-                                    viewModel.sendTestPaperUploadedSms(context, student.parentPhone, subjectUploaded)
-
-                                    Toast.makeText(context, "Test paper uploaded & SMS notification sent to parent!", Toast.LENGTH_SHORT).show()
+                                    // Test paper and marks saved on student record
+                                    Toast.makeText(context, "Test paper uploaded! Click 'Verify' below to open SMS app for parent.", Toast.LENGTH_SHORT).show()
                                     attachmentSubjectText = ""
                                     attachmentMarksText = ""
                                     attachedPhotoUri = null
@@ -4850,30 +5583,56 @@ fun StudentDetailOverlay(
                                                                         marksObtained = paper.marksObtained,
                                                                         totalMarks = paper.totalMarks
                                                                     )
-                                                                    Toast.makeText(context, "Test paper verified & SMS sent to parent!", Toast.LENGTH_SHORT).show()
+                                                                    Toast.makeText(context, "Test paper verified! Opening SMS app...", Toast.LENGTH_SHORT).show()
                                                                 },
                                                                 colors = ButtonDefaults.buttonColors(
                                                                     containerColor = Color(0xFFF3EDFF),
                                                                     contentColor = Color(0xFF6D28D9)
                                                                 ),
-                                                                modifier = Modifier.fillMaxWidth()
+                                                                modifier = Modifier
+                                                                    .fillMaxWidth()
+                                                                    .testTag("verified_open_sms_button")
                                                             ) {
                                                                 Icon(Icons.Filled.Verified, contentDescription = null, modifier = Modifier.size(16.dp))
                                                                 Spacer(modifier = Modifier.width(4.dp))
-                                                                Text("Tutor Co-Sign Co-Upload & Verify")
+                                                                Text("Verified (Send SMS)")
                                                             }
                                                         } else {
                                                             Row(
+                                                                modifier = Modifier.fillMaxWidth(),
                                                                 verticalAlignment = Alignment.CenterVertically,
-                                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                                horizontalArrangement = Arrangement.SpaceBetween
                                                             ) {
-                                                                Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(16.dp))
-                                                                Text(
-                                                                    text = "Tutor Co-Sign Approved!",
-                                                                    style = MaterialTheme.typography.labelSmall,
-                                                                    color = Color(0xFF10B981),
-                                                                    fontWeight = FontWeight.Bold
-                                                                )
+                                                                Row(
+                                                                    verticalAlignment = Alignment.CenterVertically,
+                                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                                ) {
+                                                                    Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(16.dp))
+                                                                    Text(
+                                                                        text = "Tutor Co-Sign Approved!",
+                                                                        style = MaterialTheme.typography.labelSmall,
+                                                                        color = Color(0xFF10B981),
+                                                                        fontWeight = FontWeight.Bold
+                                                                    )
+                                                                }
+                                                                OutlinedButton(
+                                                                    onClick = {
+                                                                        viewModel.sendTestPaperVerifiedSms(
+                                                                            context = context,
+                                                                            parentPhone = student.parentPhone,
+                                                                            studentName = student.name,
+                                                                            subject = paper.subjectName,
+                                                                            marksObtained = paper.marksObtained,
+                                                                            totalMarks = paper.totalMarks
+                                                                        )
+                                                                    },
+                                                                    shape = RoundedCornerShape(8.dp),
+                                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                                                ) {
+                                                                    Icon(Icons.Default.Send, contentDescription = null, tint = Color(0xFF6D28D9), modifier = Modifier.size(12.dp))
+                                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                                    Text("Resend SMS", fontSize = 11.sp, color = Color(0xFF6D28D9))
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -4933,7 +5692,7 @@ fun StudentDetailOverlay(
                                                 horizontalArrangement = Arrangement.SpaceBetween,
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                Text("Subject-wise Marks Ledger :", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF32236F))
+                                                Text("Subject-wise Marks Ledger (All Chosen Subjects):", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF32236F))
                                                 Text("${editSubjectsList.size} Subjects", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4F46E5))
                                             }
 
@@ -4985,12 +5744,27 @@ fun StudentDetailOverlay(
                                                                     )
                                                                 }
                                                             }
-                                                            Icon(
-                                                                imageVector = if (isSubjExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                                                                contentDescription = "Toggle Subject Dropdown",
-                                                                tint = Color(0xFF4F46E5),
-                                                                modifier = Modifier.size(20.dp)
-                                                            )
+                                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                                Surface(
+                                                                    shape = RoundedCornerShape(6.dp),
+                                                                    color = statusColor.copy(alpha = 0.12f),
+                                                                    modifier = Modifier.padding(end = 4.dp)
+                                                                ) {
+                                                                    Text(
+                                                                        text = "${subItem.marks.toInt()}/${subItem.maxMarks.toInt()} ($pct%)",
+                                                                        fontSize = 10.sp,
+                                                                        fontWeight = FontWeight.Bold,
+                                                                        color = statusColor,
+                                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                                    )
+                                                                }
+                                                                Icon(
+                                                                    imageVector = if (isSubjExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                                                    contentDescription = "Toggle Subject Dropdown",
+                                                                    tint = Color(0xFF4F46E5),
+                                                                    modifier = Modifier.size(20.dp)
+                                                                )
+                                                            }
                                                         }
 
                                                         // Subject Dropdown Body
@@ -5595,9 +6369,8 @@ fun AddStudentDialog(
                         parentFlatNo = parentFlatNo.trim(),
                         birthDate = birthDate.trim()
                     )
-                    viewModel.sendWelcomeSmsToParent(context, phone.trim(), name.trim(), parentName.trim())
                     onEnrollSuccess(newStu)
-                    Toast.makeText(context, "Student Enrolled & Welcome SMS sent to parent!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Registration Saved with Enrolled Subjects!", Toast.LENGTH_SHORT).show()
                 },
                 modifier = Modifier.testTag("confirm_add_stu_btn")
             ) {
@@ -5806,9 +6579,8 @@ fun TutorEnrollStudentScreen(
                                     parentFlatNo = parentFlatNo.trim(),
                                     birthDate = birthDate.trim()
                                 )
-                                viewModel.sendWelcomeSmsToParent(context, phone.trim(), name.trim(), parentName.trim())
                                 onEnrollSuccess(newStu)
-                                Toast.makeText(context, "Student Enrolled & Welcome SMS sent to parent!", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Registration Saved with Enrolled Subjects!", Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier
                                 .weight(1f)

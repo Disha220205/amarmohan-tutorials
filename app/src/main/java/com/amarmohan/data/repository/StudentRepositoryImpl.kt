@@ -35,8 +35,41 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
 
     override fun updateSupabaseConfig(url: String, key: String) {
         SupabaseProvider.updateConfig(context, url, key)
+        isSessionSchedulesTableAvailable = true
+        isAttendanceRecordsTableAvailable = true
         _isSupabaseOnline.value = SupabaseProvider.isConfigured
         _supabaseError.value = if (SupabaseProvider.isConfigured) null else "Supabase URL or Key is invalid."
+    }
+
+    private var isSessionSchedulesTableAvailable: Boolean = true
+    private var isAttendanceRecordsTableAvailable: Boolean = true
+
+    private fun loadLocalSessionSchedules(): List<SessionSchedule> {
+        val json = prefs.getString("session_schedules_cache", null) ?: return emptyList()
+        return try {
+            JsonUtils.jsonToList(json, SessionSchedule::class.java)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun saveLocalSessionSchedules(list: List<SessionSchedule>) {
+        val json = JsonUtils.listToJson(list, SessionSchedule::class.java)
+        prefs.edit().putString("session_schedules_cache", json).apply()
+    }
+
+    private fun loadLocalAttendanceRecords(): List<AttendanceRecord> {
+        val json = prefs.getString("attendance_records_cache", null) ?: return emptyList()
+        return try {
+            JsonUtils.jsonToList(json, AttendanceRecord::class.java)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun saveLocalAttendanceRecords(list: List<AttendanceRecord>) {
+        val json = JsonUtils.listToJson(list, AttendanceRecord::class.java)
+        prefs.edit().putString("attendance_records_cache", json).apply()
     }
 
     private fun loadLocalStudents() {
@@ -63,7 +96,7 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
         val api = SupabaseProvider.api
         if (api == null) {
             _isSupabaseOnline.value = false
-            _supabaseError.value = "Supabase API initialization failed. Please check your URL and Anon Key configurations."
+            _supabaseError.value = "Supabase API initialization failed. Operating in offline local mode."
             return@withContext false
         }
         try {
@@ -88,6 +121,19 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
 
             saveLocalStudents(mergedMap.values.toList())
 
+            // Sync any local students that aren't yet on Supabase
+            val unsyncedStudents = mergedMap.values.filter { !syncedIds.contains(it.slNo) && !remoteIds.contains(it.slNo) }
+            for (unsynced in unsyncedStudents) {
+                try {
+                    val resp = api.insertStudent(unsynced)
+                    if (resp.isSuccessful) {
+                        syncedIds.add(unsynced.slNo)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Syncing unsynced local student ${unsynced.slNo} deferred: ${e.message}")
+                }
+            }
+
             // Update the set of synced student IDs
             val updatedSyncedIds = (syncedIds + remoteIds - toRemove).toSet()
             prefs.edit().putStringSet("synced_student_ids", updatedSyncedIds).apply()
@@ -101,21 +147,27 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
                 400 -> "400 Bad Request: PostgREST relation error or wrong parameters."
                 else -> "HTTP Error ${e.code()}: ${e.message()}"
             }
-            Log.e(TAG, errMsg, e)
+            Log.w(TAG, "$errMsg: ${e.message()}")
             _supabaseError.value = errMsg
             _isSupabaseOnline.value = false
             loadLocalStudents()
             false
         } catch (e: java.io.IOException) {
-            val errMsg = "Network connection timed out. Please check your internet connection and Supabase endpoint."
-            Log.e(TAG, errMsg, e)
+            val errMsg = if (e is java.net.SocketTimeoutException) {
+                "Network connection timed out. Supabase is in offline cache mode."
+            } else if (e is java.net.UnknownHostException) {
+                "Unable to resolve Supabase server. Supabase is in offline cache mode."
+            } else {
+                "Network unavailable (${e.message ?: "offline"}). Supabase is in offline cache mode."
+            }
+            Log.w(TAG, "$errMsg: ${e.message}")
             _supabaseError.value = errMsg
             _isSupabaseOnline.value = false
             loadLocalStudents()
             false
         } catch (e: Exception) {
-            val errMsg = "Connection Fail: ${e.localizedMessage ?: "Check table or credentials"}"
-            Log.e(TAG, errMsg, e)
+            val errMsg = "Supabase offline: ${e.localizedMessage ?: "Offline cache active"}"
+            Log.w(TAG, "$errMsg: ${e.message}")
             _supabaseError.value = errMsg
             _isSupabaseOnline.value = false
             loadLocalStudents()
@@ -131,7 +183,7 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
         saveLocalStudents(current)
 
         val api = SupabaseProvider.api
-        if (api != null) {
+        if (api != null && _isSupabaseOnline.value) {
             try {
                 val response = api.insertStudent(student)
                 if (response.isSuccessful) {
@@ -148,8 +200,8 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
                     _supabaseError.value = errMsg
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error pushing new student to Supabase", e)
-                _supabaseError.value = "Insert failed: ${e.localizedMessage ?: "check table access"}"
+                Log.w(TAG, "Student saved locally, remote push deferred: ${e.message}")
+                _supabaseError.value = "Saved locally. Supabase offline (${e.localizedMessage ?: "network issue"})"
                 _isSupabaseOnline.value = false
             }
         }
@@ -163,7 +215,7 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
         saveLocalStudents(current)
 
         val api = SupabaseProvider.api
-        if (api != null) {
+        if (api != null && _isSupabaseOnline.value) {
             try {
                 val query = "eq.${student.slNo}"
                 api.updateStudent(query, student)
@@ -171,8 +223,8 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
                 _supabaseError.value = null
                 return@withContext true
             } catch (e: Exception) {
-                Log.e(TAG, "Error updating student in Supabase", e)
-                _supabaseError.value = "Update failed: ${e.localizedMessage ?: "check table schema"}"
+                Log.w(TAG, "Student updated locally, remote sync deferred: ${e.message}")
+                _supabaseError.value = "Updated locally. Supabase offline (${e.localizedMessage ?: "network issue"})"
                 _isSupabaseOnline.value = false
             }
         }
@@ -188,7 +240,7 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
         prefs.edit().putStringSet("synced_student_ids", syncedIds).apply()
 
         val api = SupabaseProvider.api
-        if (api != null) {
+        if (api != null && _isSupabaseOnline.value) {
             try {
                 val query = "eq.$slNo"
                 api.deleteStudent(query)
@@ -196,8 +248,8 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
                 _supabaseError.value = null
                 return@withContext true
             } catch (e: Exception) {
-                Log.e(TAG, "Error deleting student on Supabase", e)
-                _supabaseError.value = "Delete failed: ${e.localizedMessage ?: "check table schema"}"
+                Log.w(TAG, "Student deleted locally, remote sync deferred: ${e.message}")
+                _supabaseError.value = "Deleted locally. Supabase offline (${e.localizedMessage ?: "network issue"})"
                 _isSupabaseOnline.value = false
             }
         }
@@ -206,87 +258,203 @@ class StudentRepositoryImpl(private val context: Context) : StudentRepository {
 
     // --- Session Schedules ---
     override suspend fun fetchAllSessionSchedules(): List<SessionSchedule> = withContext(Dispatchers.IO) {
-        val api = SupabaseProvider.api ?: return@withContext emptyList()
+        val localSchedules = loadLocalSessionSchedules()
+        val api = SupabaseProvider.api
+        if (api == null || !isSessionSchedulesTableAvailable || !_isSupabaseOnline.value) {
+            return@withContext localSchedules
+        }
         try {
-            api.getSessionSchedules()
+            val remoteList = api.getSessionSchedules()
+            val remoteMap = remoteList.associateBy { it.id }.toMutableMap()
+            localSchedules.forEach { local ->
+                if (!remoteMap.containsKey(local.id)) {
+                    remoteMap[local.id] = local
+                }
+            }
+            val merged = remoteMap.values.toList()
+            saveLocalSessionSchedules(merged)
+            merged
+        } catch (e: retrofit2.HttpException) {
+            if (e.code() == 404 || e.code() == 400) {
+                isSessionSchedulesTableAvailable = false
+                Log.w(TAG, "Supabase session_schedules table not available (${e.code()}). Using local cache.")
+            } else {
+                Log.w(TAG, "HttpException while fetching session schedules: ${e.code()}. Using local cache.")
+            }
+            localSchedules
         } catch (e: Exception) {
-            Log.e(TAG, "Error fetching all session schedules", e)
-            emptyList()
+            Log.w(TAG, "Unable to fetch remote session schedules: ${e.message}. Using local cache.")
+            localSchedules
         }
     }
 
     override suspend fun fetchSessionSchedules(studentSlNo: String): List<SessionSchedule> = withContext(Dispatchers.IO) {
-        val api = SupabaseProvider.api ?: return@withContext emptyList()
+        val local = loadLocalSessionSchedules().filter { it.studentSlNo == studentSlNo }
+        val api = SupabaseProvider.api
+        if (api == null || !isSessionSchedulesTableAvailable || !_isSupabaseOnline.value) {
+            return@withContext local
+        }
         try {
-            api.getSchedulesForStudent("eq.$studentSlNo")
+            val remote = api.getSchedulesForStudent("eq.$studentSlNo")
+            val combined = (local.filter { loc -> remote.none { it.id == loc.id } } + remote)
+            combined
+        } catch (e: retrofit2.HttpException) {
+            if (e.code() == 404 || e.code() == 400) {
+                isSessionSchedulesTableAvailable = false
+            }
+            Log.w(TAG, "Supabase session_schedules table not available (${e.code()}). Using local.")
+            local
         } catch (e: Exception) {
-            Log.e(TAG, "Error fetching session schedules for student $studentSlNo", e)
-            emptyList()
+            Log.w(TAG, "Error fetching schedules for student $studentSlNo: ${e.message}. Using local.")
+            local
         }
     }
 
     override suspend fun createSessionSchedule(schedule: SessionSchedule): Boolean = withContext(Dispatchers.IO) {
-        val api = SupabaseProvider.api ?: return@withContext false
+        val local = loadLocalSessionSchedules().filter { it.id != schedule.id } + schedule
+        saveLocalSessionSchedules(local)
+        val api = SupabaseProvider.api
+        if (api == null || !isSessionSchedulesTableAvailable || !_isSupabaseOnline.value) {
+            return@withContext true
+        }
         try {
             val response = api.insertSessionSchedule(schedule)
-            response.isSuccessful
+            if (!response.isSuccessful && (response.code() == 404 || response.code() == 400)) {
+                isSessionSchedulesTableAvailable = false
+            }
+            true
+        } catch (e: retrofit2.HttpException) {
+            if (e.code() == 404 || e.code() == 400) {
+                isSessionSchedulesTableAvailable = false
+            }
+            Log.w(TAG, "Remote insertSessionSchedule failed (${e.code()}), safely saved in local storage.")
+            true
         } catch (e: Exception) {
-            Log.e(TAG, "Error creating session schedule", e)
-            false
+            Log.w(TAG, "Remote insertSessionSchedule exception: ${e.message}, safely saved in local storage.")
+            true
         }
     }
 
     override suspend fun removeSessionSchedule(id: String): Boolean = withContext(Dispatchers.IO) {
-        val api = SupabaseProvider.api ?: return@withContext false
+        val local = loadLocalSessionSchedules().filter { it.id != id }
+        saveLocalSessionSchedules(local)
+        val api = SupabaseProvider.api
+        if (api == null || !isSessionSchedulesTableAvailable || !_isSupabaseOnline.value) {
+            return@withContext true
+        }
         try {
             api.deleteSessionSchedule("eq.$id")
             true
+        } catch (e: retrofit2.HttpException) {
+            if (e.code() == 404 || e.code() == 400) {
+                isSessionSchedulesTableAvailable = false
+            }
+            Log.w(TAG, "Remote deleteSessionSchedule failed (${e.code()}), removed from local storage.")
+            true
         } catch (e: Exception) {
-            Log.e(TAG, "Error removing session schedule $id", e)
-            false
+            Log.w(TAG, "Remote deleteSessionSchedule exception: ${e.message}, removed from local storage.")
+            true
         }
     }
 
     // --- Attendance Records ---
     override suspend fun fetchAllAttendanceRecords(): List<AttendanceRecord> = withContext(Dispatchers.IO) {
-        val api = SupabaseProvider.api ?: return@withContext emptyList()
+        val localRecords = loadLocalAttendanceRecords()
+        val api = SupabaseProvider.api
+        if (api == null || !isAttendanceRecordsTableAvailable || !_isSupabaseOnline.value) {
+            return@withContext localRecords
+        }
         try {
-            api.getAttendanceRecords()
+            val remoteList = api.getAttendanceRecords()
+            val remoteMap = remoteList.associateBy { it.id }.toMutableMap()
+            localRecords.forEach { local ->
+                if (!remoteMap.containsKey(local.id)) {
+                    remoteMap[local.id] = local
+                }
+            }
+            val merged = remoteMap.values.toList()
+            saveLocalAttendanceRecords(merged)
+            merged
+        } catch (e: retrofit2.HttpException) {
+            if (e.code() == 404 || e.code() == 400) {
+                isAttendanceRecordsTableAvailable = false
+                Log.w(TAG, "Supabase attendance_records table not available (${e.code()}). Using local cache.")
+            } else {
+                Log.w(TAG, "HttpException while fetching attendance records: ${e.code()}. Using local cache.")
+            }
+            localRecords
         } catch (e: Exception) {
-            Log.e(TAG, "Error fetching all attendance records", e)
-            emptyList()
+            Log.w(TAG, "Unable to fetch remote attendance records: ${e.message}. Using local cache.")
+            localRecords
         }
     }
 
     override suspend fun fetchAttendanceRecords(studentSlNo: String): List<AttendanceRecord> = withContext(Dispatchers.IO) {
-        val api = SupabaseProvider.api ?: return@withContext emptyList()
+        val local = loadLocalAttendanceRecords().filter { it.studentSlNo == studentSlNo }
+        val api = SupabaseProvider.api
+        if (api == null || !isAttendanceRecordsTableAvailable || !_isSupabaseOnline.value) {
+            return@withContext local
+        }
         try {
-            api.getAttendanceForStudent("eq.$studentSlNo")
+            val remote = api.getAttendanceForStudent("eq.$studentSlNo")
+            val combined = (local.filter { loc -> remote.none { it.id == loc.id } } + remote)
+            combined
+        } catch (e: retrofit2.HttpException) {
+            if (e.code() == 404 || e.code() == 400) {
+                isAttendanceRecordsTableAvailable = false
+            }
+            Log.w(TAG, "Supabase attendance_records table not available (${e.code()}). Using local.")
+            local
         } catch (e: Exception) {
-            Log.e(TAG, "Error fetching attendance records for student $studentSlNo", e)
-            emptyList()
+            Log.w(TAG, "Error fetching attendance records for student $studentSlNo: ${e.message}. Using local.")
+            local
         }
     }
 
     override suspend fun createAttendanceRecord(record: AttendanceRecord): Boolean = withContext(Dispatchers.IO) {
-        val api = SupabaseProvider.api ?: return@withContext false
+        val local = loadLocalAttendanceRecords().filter { it.id != record.id } + record
+        saveLocalAttendanceRecords(local)
+        val api = SupabaseProvider.api
+        if (api == null || !isAttendanceRecordsTableAvailable || !_isSupabaseOnline.value) {
+            return@withContext true
+        }
         try {
             val response = api.insertAttendanceRecord(record)
-            response.isSuccessful
+            if (!response.isSuccessful && (response.code() == 404 || response.code() == 400)) {
+                isAttendanceRecordsTableAvailable = false
+            }
+            true
+        } catch (e: retrofit2.HttpException) {
+            if (e.code() == 404 || e.code() == 400) {
+                isAttendanceRecordsTableAvailable = false
+            }
+            Log.w(TAG, "Remote insertAttendanceRecord failed (${e.code()}), safely saved in local storage.")
+            true
         } catch (e: Exception) {
-            Log.e(TAG, "Error creating attendance record", e)
-            false
+            Log.w(TAG, "Remote insertAttendanceRecord exception: ${e.message}, safely saved in local storage.")
+            true
         }
     }
 
     override suspend fun removeAttendanceRecord(id: String): Boolean = withContext(Dispatchers.IO) {
-        val api = SupabaseProvider.api ?: return@withContext false
+        val local = loadLocalAttendanceRecords().filter { it.id != id }
+        saveLocalAttendanceRecords(local)
+        val api = SupabaseProvider.api
+        if (api == null || !isAttendanceRecordsTableAvailable || !_isSupabaseOnline.value) {
+            return@withContext true
+        }
         try {
             api.deleteAttendanceRecord("eq.$id")
             true
+        } catch (e: retrofit2.HttpException) {
+            if (e.code() == 404 || e.code() == 400) {
+                isAttendanceRecordsTableAvailable = false
+            }
+            Log.w(TAG, "Remote deleteAttendanceRecord failed (${e.code()}), removed from local storage.")
+            true
         } catch (e: Exception) {
-            Log.e(TAG, "Error removing attendance record $id", e)
-            false
+            Log.w(TAG, "Remote deleteAttendanceRecord exception: ${e.message}, removed from local storage.")
+            true
         }
     }
 

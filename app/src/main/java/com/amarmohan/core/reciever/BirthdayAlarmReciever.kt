@@ -1,16 +1,12 @@
 package com.amarmohan.core.receiver
 
-import android.Manifest
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Build
-import android.telephony.SmsManager
 import android.util.Log
-import androidx.core.content.ContextCompat
 import com.amarmohan.domain.model.JsonUtils
 import com.amarmohan.domain.model.Student
 import java.text.SimpleDateFormat
@@ -59,40 +55,64 @@ class BirthdayAlarmReceiver : BroadcastReceiver() {
 
                 val triggerTime = calendar.timeInMillis
 
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    if (alarmManager.canScheduleExactAlarms()) {
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        if (alarmManager.canScheduleExactAlarms()) {
+                            alarmManager.setExactAndAllowWhileIdle(
+                                AlarmManager.RTC_WAKEUP,
+                                triggerTime,
+                                pendingIntent
+                            )
+                        } else {
+                            alarmManager.setAndAllowWhileIdle(
+                                AlarmManager.RTC_WAKEUP,
+                                triggerTime,
+                                pendingIntent
+                            )
+                        }
+                    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                         alarmManager.setExactAndAllowWhileIdle(
                             AlarmManager.RTC_WAKEUP,
                             triggerTime,
                             pendingIntent
                         )
                     } else {
-                        alarmManager.setAndAllowWhileIdle(
+                        alarmManager.setExact(
                             AlarmManager.RTC_WAKEUP,
                             triggerTime,
                             pendingIntent
                         )
                     }
-                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    alarmManager.setExactAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP,
-                        triggerTime,
-                        pendingIntent
-                    )
-                } else {
-                    alarmManager.set(
-                        AlarmManager.RTC_WAKEUP,
-                        triggerTime,
-                        pendingIntent
-                    )
+                } catch (se: SecurityException) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        alarmManager.setAndAllowWhileIdle(
+                            AlarmManager.RTC_WAKEUP,
+                            triggerTime,
+                            pendingIntent
+                        )
+                    } else {
+                        alarmManager.set(
+                            AlarmManager.RTC_WAKEUP,
+                            triggerTime,
+                            pendingIntent
+                        )
+                    }
                 }
                 Log.d(TAG, "Scheduled next midnight 00:00 birthday check alarm for: ${calendar.time}")
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to schedule midnight alarm", e)
+                Log.w(TAG, "Could not schedule midnight alarm: ${e.message}")
             }
         }
 
+        private const val CHANNEL_ID = "tutor_birthday_reminders"
+
         fun checkAndDispatchBirthdaySms(context: Context) {
+            // Automated background SMS removed per user instructions.
+            // Dispatch in-app reminders and notifications for the tutor instead.
+            checkAndNotifyBirthdays(context)
+        }
+
+        fun checkAndNotifyBirthdays(context: Context) {
             try {
                 val prefs = context.getSharedPreferences("TutorPortalPrefs", Context.MODE_PRIVATE)
                 val syncPrefs = context.getSharedPreferences("tutorsync_prefs", Context.MODE_PRIVATE)
@@ -108,51 +128,187 @@ class BirthdayAlarmReceiver : BroadcastReceiver() {
                 val allCombinedStudents = (list1 + list2 + list3).distinctBy { it.slNo }
 
                 allCombinedStudents.forEach { student ->
-                    dispatchBirthdaySmsIfToday(context, student)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error in checkAndDispatchBirthdaySms", e)
-            }
-        }
-
-        fun dispatchBirthdaySmsIfToday(context: Context, student: Student, force: Boolean = false) {
-            if (student.birthDate.isNotBlank() && isBirthdayToday(student.birthDate) && student.parentPhone.isNotBlank()) {
-                val todayDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-                val syncPrefs = context.getSharedPreferences("tutorsync_prefs", Context.MODE_PRIVATE)
-                val sentKey = "birthday_sms_sent_${student.slNo}_$todayDate"
-                val alreadySent = syncPrefs.getBoolean(sentKey, false)
-                if (!alreadySent || force) {
-                    val cleanPhone = student.parentPhone.trim().filter { it.isDigit() }
-                    if (cleanPhone.isNotEmpty()) {
-                        val message = " happy Birthday dear ${student.name}, wish you a very successfull and prosporous life ahead , stay healthy and happy , regards Shree amarmohan tutions ."
-                        sendSmsSilently(context, cleanPhone, message)
-                        syncPrefs.edit().putBoolean(sentKey, true).apply()
-                        Log.d(TAG, "Birthday SMS dispatched for ${student.name} ($cleanPhone)")
+                    if (student.birthDate.isNotBlank() && isBirthdayToday(student.birthDate)) {
+                        showBirthdayReminderNotification(context, student)
                     }
                 }
+            } catch (e: Exception) {
+                Log.w(TAG, "Notice in checkAndNotifyBirthdays: ${e.message}")
             }
         }
 
-        private fun sendSmsSilently(context: Context, cleanPhone: String, message: String) {
+        fun showBirthdayReminderNotification(context: Context, student: Student) {
             try {
-                if (ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
-                    Log.w(TAG, "SEND_SMS permission not granted; skipping background silent SMS")
-                    return
+                val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager ?: return
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val channel = android.app.NotificationChannel(
+                        CHANNEL_ID,
+                        "Birthday & Student Reminders",
+                        android.app.NotificationManager.IMPORTANCE_DEFAULT
+                    ).apply {
+                        description = "Reminders for student birthdays and new messages"
+                    }
+                    notificationManager.createNotificationChannel(channel)
                 }
-                val smsManager: SmsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    context.getSystemService(SmsManager::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    SmsManager.getDefault()
+
+                val cleanPhone = student.parentPhone.trim().filter { it.isDigit() || it == '+' }
+                val targetPhone = if (cleanPhone.isNotEmpty()) cleanPhone else "9876543210"
+                val birthdayMessage = " happy Birthday dear ${student.name}, wish you a very successfull and prosporous life ahead , stay healthy and happy , regards Shree amarmohan tutions ."
+
+                // Explicit Intent to MainActivity to guarantee reliable dispatch and activity launch
+                val notifyIntent = Intent(context, com.amarmohan.MainActivity::class.java).apply {
+                    putExtra("ACTION_DISPATCH_SMS", true)
+                    putExtra("EXTRA_PHONE", targetPhone)
+                    putExtra("EXTRA_MESSAGE", birthdayMessage)
+                    putExtra("EXTRA_STUDENT_SL_NO", student.slNo)
+                    putExtra("EXTRA_IS_BIRTHDAY", true)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 }
-                val parts = smsManager.divideMessage(message)
-                if (parts.size > 1) {
-                    smsManager.sendMultipartTextMessage(cleanPhone, null, parts, null, null)
-                } else {
-                    smsManager.sendTextMessage(cleanPhone, null, message, null, null)
-                }
+                val pendingIntent = PendingIntent.getActivity(
+                    context,
+                    student.name.hashCode(),
+                    notifyIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+
+                val notification = androidx.core.app.NotificationCompat.Builder(context, CHANNEL_ID)
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setContentTitle("🎂 Student Birthday Today: ${student.name}")
+                    .setContentText("Today is ${student.name}'s birthday (SL: ${student.slNo}). Tap to send SMS!")
+                    .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                    .setContentIntent(pendingIntent)
+                    .addAction(android.R.drawable.ic_menu_send, "Wish via SMS", pendingIntent)
+                    .setAutoCancel(true)
+                    .build()
+
+                notificationManager.notify(student.name.hashCode(), notification)
+                Log.d(TAG, "Birthday reminder notification posted for ${student.name}")
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to send SMS in background: ${e.message}", e)
+                Log.w(TAG, "Could not show birthday notification: ${e.message}")
+            }
+        }
+
+        fun showStudentMessageNotification(context: Context, student: Student, reminderText: String, reminderId: String? = null) {
+            try {
+                val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager ?: return
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val channel = android.app.NotificationChannel(
+                        CHANNEL_ID,
+                        "Birthday & Student Reminders",
+                        android.app.NotificationManager.IMPORTANCE_DEFAULT
+                    ).apply {
+                        description = "Reminders for student birthdays and new messages"
+                    }
+                    notificationManager.createNotificationChannel(channel)
+                }
+
+                val cleanPhone = student.parentPhone.trim().filter { it.isDigit() || it == '+' }
+                val targetPhone = if (cleanPhone.isNotEmpty()) cleanPhone else "9876543210"
+                val replyMessage = "Hello, regarding message for ${student.name} ('$reminderText'): "
+
+                val notifyIntent = Intent(context, com.amarmohan.MainActivity::class.java).apply {
+                    putExtra("ACTION_DISPATCH_SMS", true)
+                    putExtra("EXTRA_PHONE", targetPhone)
+                    putExtra("EXTRA_MESSAGE", replyMessage)
+                    putExtra("EXTRA_STUDENT_SL_NO", student.slNo)
+                    if (reminderId != null) {
+                        putExtra("EXTRA_REMINDER_ID", reminderId)
+                    }
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
+                val pendingIntent = PendingIntent.getActivity(
+                    context,
+                    (student.name + reminderText).hashCode(),
+                    notifyIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+
+                val notification = androidx.core.app.NotificationCompat.Builder(context, CHANNEL_ID)
+                    .setSmallIcon(android.R.drawable.ic_dialog_email)
+                    .setContentTitle("📩 New Message regarding ${student.name}")
+                    .setContentText(reminderText)
+                    .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText("Message for ${student.name} (SL: ${student.slNo}): $reminderText. Tap to reply via SMS."))
+                    .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                    .setContentIntent(pendingIntent)
+                    .addAction(android.R.drawable.ic_menu_send, "Reply via SMS", pendingIntent)
+                    .setAutoCancel(true)
+                    .build()
+
+                notificationManager.notify((student.name + reminderText).hashCode(), notification)
+                Log.d(TAG, "Student message notification posted for ${student.name}")
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not show student message notification: ${e.message}")
+            }
+        }
+
+        fun showNewStudentNotification(
+            context: Context,
+            student: Student,
+            reminderId: String? = null,
+            isSignIn: Boolean = reminderId?.startsWith("signin") == true
+        ) {
+            try {
+                val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager ?: return
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val channel = android.app.NotificationChannel(
+                        CHANNEL_ID,
+                        "Birthday & Student Reminders",
+                        android.app.NotificationManager.IMPORTANCE_DEFAULT
+                    ).apply {
+                        description = "Reminders for student birthdays, enrollments, and messages"
+                    }
+                    notificationManager.createNotificationChannel(channel)
+                }
+
+                val cleanPhone = student.parentPhone.trim().filter { it.isDigit() || it == '+' }
+                val targetPhone = if (cleanPhone.isNotEmpty()) cleanPhone else "9876543210"
+                val welcomeMessage = if (isSignIn) {
+                    "Welcome to Shree AmarMohan Tuition! Dear Parent, student ${student.name} (Reg No: ${student.slNo}) has signed into the student portal. Regards, Shree AmarMohan Tuition."
+                } else {
+                    "Welcome to Shree AmarMohan Tuition! Dear Parent, student ${student.name} (Reg No: ${student.slNo}, Class: ${student.standard}) has been successfully enrolled. Regards, Shree AmarMohan Tuition."
+                }
+                val notifId = if (isSignIn) (student.slNo + "_signin").hashCode() else (student.slNo + "_enroll").hashCode()
+
+                val notifyIntent = Intent(context, com.amarmohan.MainActivity::class.java).apply {
+                    putExtra("ACTION_DISPATCH_SMS", true)
+                    putExtra("EXTRA_PHONE", targetPhone)
+                    putExtra("EXTRA_MESSAGE", welcomeMessage)
+                    putExtra("EXTRA_STUDENT_SL_NO", student.slNo)
+                    if (reminderId != null) {
+                        putExtra("EXTRA_REMINDER_ID", reminderId)
+                    }
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
+                val pendingIntent = PendingIntent.getActivity(
+                    context,
+                    notifId,
+                    notifyIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+
+                val title = if (isSignIn) "🎉 Student Signed In: ${student.name}" else "🎉 New Student Enrolled: ${student.name}"
+                val content = if (isSignIn) "Student ${student.name} signed in. Tap to review & send SMS to parent." else "Enrolled in ${student.standard}. Tap to review & send welcome SMS to parent."
+                val bigText = if (isSignIn) {
+                    "Student ${student.name} (Reg No: ${student.slNo}) has signed in. Tap to open SMS app with pre-written message for tutor to review and send."
+                } else {
+                    "New student ${student.name} (Reg No: ${student.slNo}) enrolled. Tap to open SMS app with pre-written welcome message for tutor to review and send."
+                }
+
+                val notification = androidx.core.app.NotificationCompat.Builder(context, CHANNEL_ID)
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setContentTitle(title)
+                    .setContentText(content)
+                    .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(bigText))
+                    .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                    .setContentIntent(pendingIntent)
+                    .addAction(android.R.drawable.ic_menu_send, if (isSignIn) "Send SMS to Parent" else "Send Welcome SMS", pendingIntent)
+                    .setAutoCancel(true)
+                    .build()
+
+                notificationManager.notify(notifId, notification)
+                Log.d(TAG, "New student notification posted for ${student.name}: isSignIn=$isSignIn")
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not show new student notification: ${e.message}")
             }
         }
 

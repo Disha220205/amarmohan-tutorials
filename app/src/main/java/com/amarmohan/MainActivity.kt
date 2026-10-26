@@ -54,11 +54,8 @@ class MainActivity : ComponentActivity() {
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val smsGranted = permissions[Manifest.permission.SEND_SMS] ?: false
-        if (smsGranted) {
-            viewModel.checkAndSendAutomaticBirthdayGreetings(applicationContext)
-        }
+    ) { _ ->
+        // Permissions handled
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -73,8 +70,8 @@ class MainActivity : ComponentActivity() {
         // Schedule daily midnight 00:00 birthday trigger alarm
         BirthdayAlarmReceiver.scheduleNextMidnightAlarm(applicationContext)
 
-        // Check if today is any student's birthday immediately on app launch
-        viewModel.checkAndSendAutomaticBirthdayGreetings(applicationContext)
+        // Handle incoming action from notification tap
+        handleIncomingSmsIntent(intent)
 
         setContent {
             val stableDensity = DisplayMetrics.DENSITY_DEVICE_STABLE / DisplayMetrics.DENSITY_DEFAULT.toFloat()
@@ -128,7 +125,7 @@ class MainActivity : ComponentActivity() {
                                         color = Color(0xFF708090)
                                     )
                                     Text(
-                                        text = "Portal system app 🧿",
+                                        text = "Portal system app",
                                         fontSize = 12.sp,
                                         letterSpacing = 1.sp,
                                         color = Color.Gray
@@ -161,9 +158,6 @@ class MainActivity : ComponentActivity() {
 
     private fun requestRequiredPermissions() {
         val permissionsToRequest = mutableListOf<String>()
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
-            permissionsToRequest.add(Manifest.permission.SEND_SMS)
-        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
@@ -187,6 +181,43 @@ class MainActivity : ComponentActivity() {
             }
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingSmsIntent(intent)
+    }
+
+    private fun handleIncomingSmsIntent(incomingIntent: Intent?) {
+        if (incomingIntent?.getBooleanExtra("ACTION_DISPATCH_SMS", false) == true) {
+            val phone = incomingIntent.getStringExtra("EXTRA_PHONE") ?: return
+            val message = incomingIntent.getStringExtra("EXTRA_MESSAGE") ?: return
+            val studentSlNo = incomingIntent.getStringExtra("EXTRA_STUDENT_SL_NO")
+            val reminderId = incomingIntent.getStringExtra("EXTRA_REMINDER_ID")
+            val isBirthday = incomingIntent.getBooleanExtra("EXTRA_IS_BIRTHDAY", false)
+
+            val notificationManager = getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+
+            if (!studentSlNo.isNullOrEmpty()) {
+                if (!reminderId.isNullOrEmpty()) {
+                    viewModel.removeReminder(studentSlNo, reminderId)
+                } else {
+                    viewModel.removeEnrollmentReminders(studentSlNo)
+                }
+                notificationManager?.cancel((studentSlNo + "_enroll").hashCode())
+                notificationManager?.cancel((studentSlNo + "_signin").hashCode())
+            }
+            if (!studentSlNo.isNullOrEmpty() && isBirthday) {
+                viewModel.markBirthdaySmsSent(studentSlNo)
+                val matchingStudent = viewModel.students.value.find { it.slNo == studentSlNo }
+                if (matchingStudent != null) {
+                    notificationManager?.cancel(matchingStudent.name.hashCode())
+                }
+            }
+
+            viewModel.openSmsApp(this, phone, message)
         }
     }
 }
